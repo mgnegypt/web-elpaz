@@ -2,7 +2,12 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { OWNER, loginWithSecurity, setupOwner, startTestServer } from "./helper.mjs";
+import {
+  OWNER,
+  loginWithSecurity,
+  setupOwner,
+  startTestServer,
+} from "./helper.mjs";
 import { DEFAULT_CONTENT } from "../shared/content.ts";
 
 let api;
@@ -36,7 +41,10 @@ test("health and public content endpoints respond with the seeded document", asy
   assert.equal(content.status, 200);
   assert.equal(content.body.revision, 1);
   assert.equal(content.body.products.length, DEFAULT_CONTENT.products.length);
-  assert.equal(content.body.hero.slides.length, DEFAULT_CONTENT.hero.slides.length);
+  assert.equal(
+    content.body.hero.slides.length,
+    DEFAULT_CONTENT.hero.slides.length,
+  );
   assert.equal(content.body.sectionNames.length, 8);
   // The owner's Arabic copy must survive untouched.
   assert.equal(content.body.site.whatsapp, "201141322878");
@@ -58,15 +66,27 @@ test("dev/API surface never exposes private files", async () => {
 });
 
 test("wholesale requests persist and a repeated requestKey is idempotent", async () => {
-  const first = await api.json("/api/wholesale-requests", "POST", validRequest());
+  const first = await api.json(
+    "/api/wholesale-requests",
+    "POST",
+    validRequest(),
+  );
   assert.equal(first.status, 201);
   assert.equal(first.body.saved, true);
   assert.equal(first.body.duplicate, false);
 
-  const second = await api.json("/api/wholesale-requests", "POST", validRequest());
+  const second = await api.json(
+    "/api/wholesale-requests",
+    "POST",
+    validRequest(),
+  );
   assert.equal(second.status, 200);
   assert.equal(second.body.duplicate, true);
-  assert.equal(second.body.id, first.body.id, "duplicate must reuse the same record");
+  assert.equal(
+    second.body.id,
+    first.body.id,
+    "duplicate must reuse the same record",
+  );
 
   const rows = api.db.listRequests({ limit: 50, offset: 0 });
   assert.equal(rows.total, 1, "only one row may exist for one requestKey");
@@ -75,12 +95,27 @@ test("wholesale requests persist and a repeated requestKey is idempotent", async
 test("invalid wholesale payloads are rejected", async () => {
   const cases = [
     ["zero quantity", validRequest({ requestKey: "bad-qty-0", quantity: 0 })],
-    ["negative quantity", validRequest({ requestKey: "bad-qty-1", quantity: -5 })],
-    ["missing consent", validRequest({ requestKey: "bad-consent", consent: false })],
-    ["honeypot filled", validRequest({ requestKey: "bad-bot", honeypot: "http://spam" })],
+    [
+      "negative quantity",
+      validRequest({ requestKey: "bad-qty-1", quantity: -5 }),
+    ],
+    [
+      "missing consent",
+      validRequest({ requestKey: "bad-consent", consent: false }),
+    ],
+    [
+      "honeypot filled",
+      validRequest({ requestKey: "bad-bot", honeypot: "http://spam" }),
+    ],
     ["malformed name", validRequest({ requestKey: "bad-name", name: "x" })],
-    ["malformed contact", validRequest({ requestKey: "bad-contact", contact: "not-a-number" })],
-    ["oversized quantity", validRequest({ requestKey: "bad-big", quantity: 9e9 })],
+    [
+      "malformed contact",
+      validRequest({ requestKey: "bad-contact", contact: "not-a-number" }),
+    ],
+    [
+      "oversized quantity",
+      validRequest({ requestKey: "bad-big", quantity: 9e9 }),
+    ],
   ];
   for (const [label, payload] of cases) {
     const response = await api.json("/api/wholesale-requests", "POST", payload);
@@ -112,7 +147,10 @@ test("cross-origin mutations are rejected", async () => {
 
 test("first-run setup requires the exact one-time token and cannot be repeated", async () => {
   const tokenPath = join(api.dataDir, "setup-token");
-  assert.ok(existsSync(tokenPath), "a setup token file must be created on first run");
+  assert.ok(
+    existsSync(tokenPath),
+    "a setup token file must be created on first run",
+  );
   const token = readFileSync(tokenPath, "utf8").trim();
   assert.equal(token.length, 64, "the setup token must be 64 characters");
 
@@ -146,7 +184,11 @@ test("first-run setup requires the exact one-time token and cannot be repeated",
   assert.ok(created.body.csrf, "a CSRF token must be issued");
 
   // The one-time token is deleted and setup is permanently closed.
-  assert.equal(existsSync(tokenPath), false, "setup token must be deleted after setup");
+  assert.equal(
+    existsSync(tokenPath),
+    false,
+    "setup token must be deleted after setup",
+  );
   const repeated = await api.json("/api/admin/setup", "POST", {
     token,
     username: "intruder",
@@ -166,7 +208,10 @@ test("first-run setup requires the exact one-time token and cannot be repeated",
 test("admin endpoints are protected and CSRF is enforced", async () => {
   const fresh = await startTestServer();
   try {
-    const token = readFileSync(join(fresh.dataDir, "setup-token"), "utf8").trim();
+    const token = readFileSync(
+      join(fresh.dataDir, "setup-token"),
+      "utf8",
+    ).trim();
     const created = await fresh.json("/api/admin/setup", "POST", {
       token,
       username: "owner",
@@ -175,13 +220,19 @@ test("admin endpoints are protected and CSRF is enforced", async () => {
     const csrf = created.body.csrf;
 
     // Unauthenticated access to a protected endpoint (cookie jar deliberately bypassed).
-    const anonymous = await fresh.request("/api/admin/requests", { anonymous: true });
+    const anonymous = await fresh.request("/api/admin/requests", {
+      anonymous: true,
+    });
     assert.equal(anonymous.status, 401);
-    const anonymousContent = await fresh.request("/api/admin/content", { anonymous: true });
+    const anonymousContent = await fresh.request("/api/admin/content", {
+      anonymous: true,
+    });
     assert.equal(anonymousContent.status, 401);
 
     // Authenticated but missing the CSRF header.
-    const missingCsrf = await fresh.json("/api/admin/requests/1", "PATCH", { status: "contacted" });
+    const missingCsrf = await fresh.json("/api/admin/requests/1", "PATCH", {
+      status: "contacted",
+    });
     assert.equal(missingCsrf.status, 403);
     assert.equal(missingCsrf.body.error, "csrf-rejected");
 
@@ -211,7 +262,11 @@ test("admin endpoints are protected and CSRF is enforced", async () => {
       { status: "confirmed" },
       csrf,
     );
-    assert.equal(revokedWrite.status, 401, "a revoked session must not be usable");
+    assert.equal(
+      revokedWrite.status,
+      401,
+      "a revoked session must not be usable",
+    );
   } finally {
     await fresh.close();
   }
@@ -220,7 +275,10 @@ test("admin endpoints are protected and CSRF is enforced", async () => {
 test("invalid URL schemes are rejected when saving products", async () => {
   const fresh = await startTestServer();
   try {
-    const token = readFileSync(join(fresh.dataDir, "setup-token"), "utf8").trim();
+    const token = readFileSync(
+      join(fresh.dataDir, "setup-token"),
+      "utf8",
+    ).trim();
     const created = await fresh.json("/api/admin/setup", "POST", {
       token,
       username: "owner",
@@ -238,8 +296,17 @@ test("invalid URL schemes are rejected when saving products", async () => {
       },
       { "x-csrf-token": created.body.csrf },
     );
-    assert.equal(completed.status, 200, "the first-run profile must be completable");
-    const relogin = await loginWithSecurity(fresh, OWNER.email, OWNER.finalPassword, OWNER.answer);
+    assert.equal(
+      completed.status,
+      200,
+      "the first-run profile must be completable",
+    );
+    const relogin = await loginWithSecurity(
+      fresh,
+      OWNER.email,
+      OWNER.finalPassword,
+      OWNER.answer,
+    );
     const csrf = { "x-csrf-token": relogin.body.csrf };
     const revision = (await fresh.request("/api/admin/content")).body.revision;
     const base = {
@@ -338,7 +405,11 @@ test("a stale revision cannot overwrite newer content", async () => {
     const stale = await fresh.json(
       "/api/admin/content",
       "PUT",
-      { ...current, revision: current.revision, copy: { ...current.copy, heroTagline: "قديم" } },
+      {
+        ...current,
+        revision: current.revision,
+        copy: { ...current.copy, heroTagline: "قديم" },
+      },
       csrf,
     );
     assert.equal(stale.status, 409);
@@ -364,7 +435,10 @@ test("security headers and no-store caching are present", async () => {
 test("owner first run: profile completion, security question, and forced re-login", async () => {
   const fresh = await startTestServer();
   try {
-    const token = readFileSync(join(fresh.dataDir, "setup-token"), "utf8").trim();
+    const token = readFileSync(
+      join(fresh.dataDir, "setup-token"),
+      "utf8",
+    ).trim();
     const setup = await fresh.json("/api/admin/setup", "POST", {
       token,
       username: "owner",
@@ -422,7 +496,12 @@ test("owner first run: profile completion, security question, and forced re-logi
     assert.equal((await fresh.request("/api/admin/session")).status, 401);
 
     // The completion step cannot be replayed later.
-    const again = await loginWithSecurity(fresh, OWNER.email, OWNER.finalPassword, OWNER.answer);
+    const again = await loginWithSecurity(
+      fresh,
+      OWNER.email,
+      OWNER.finalPassword,
+      OWNER.answer,
+    );
     const replay = await fresh.json(
       "/api/admin/profile/complete",
       "POST",
@@ -465,7 +544,9 @@ test("owner first run: profile completion, security question, and forced re-logi
       401,
     );
 
-    const wrongAnswer = await fresh.json("/api/admin/login/security", "POST", { answer: "خطأ" });
+    const wrongAnswer = await fresh.json("/api/admin/login/security", "POST", {
+      answer: "خطأ",
+    });
     assert.equal(wrongAnswer.status, 401);
     assert.equal(wrongAnswer.body.error, "invalid-security-answer");
 
@@ -479,7 +560,9 @@ test("owner first run: profile completion, security question, and forced re-logi
 
     // The security answer is stored as a hash, never as plain text.
     const row = fresh.db.raw
-      .prepare("SELECT security_answer_hash, password_hash FROM admins WHERE role = 'owner'")
+      .prepare(
+        "SELECT security_answer_hash, password_hash FROM admins WHERE role = 'owner'",
+      )
       .get();
     assert.ok(row.security_answer_hash.startsWith("scrypt$"));
     assert.equal(row.security_answer_hash.includes(OWNER.answer), false);
@@ -505,7 +588,7 @@ test("owner-only account management: admins can never reach it", async () => {
         username: "editor",
         displayName: "محرر الموقع",
         email: "editor@elpaze.online",
-        password: "editor-long-password-1",
+        password: "kitchen-secret-pass-1",
         role: "admin",
       },
       ownerCsrf,
@@ -524,7 +607,7 @@ test("owner-only account management: admins can never reach it", async () => {
         username: "editor",
         displayName: "مكرر",
         email: "other@elpaze.online",
-        password: "editor-long-password-1",
+        password: "kitchen-secret-pass-1",
         role: "admin",
       },
       ownerCsrf,
@@ -538,7 +621,12 @@ test("owner-only account management: admins can never reach it", async () => {
     assert.equal(JSON.stringify(listed.body).includes("scrypt$"), false);
 
     // --- the admin signs in and is blocked from every owner endpoint ---
-    const login = await loginWithSecurity(admin, "editor@elpaze.online", "editor-long-password-1", "");
+    const login = await loginWithSecurity(
+      admin,
+      "editor@elpaze.online",
+      "kitchen-secret-pass-1",
+      "",
+    );
     assert.equal(login.status, 200);
     assert.equal(login.body.role, "admin");
     const adminCsrf = { "x-csrf-token": login.body.csrf };
@@ -547,8 +635,28 @@ test("owner-only account management: admins can never reach it", async () => {
 
     const forbidden = [
       ["GET", "/api/admin/admins", null],
-      ["POST", "/api/admin/admins", { username: "hacker", displayName: "h", email: "h@x.com", password: "long-enough-password", role: "owner" }],
-      ["PUT", `/api/admin/admins/${created.body.admin.id}`, { username: "hacked", displayName: "h", email: "h@x.com", avatarUrl: "", role: "owner" }],
+      [
+        "POST",
+        "/api/admin/admins",
+        {
+          username: "hacker",
+          displayName: "h",
+          email: "h@x.com",
+          password: "long-enough-password",
+          role: "owner",
+        },
+      ],
+      [
+        "PUT",
+        `/api/admin/admins/${created.body.admin.id}`,
+        {
+          username: "hacked",
+          displayName: "h",
+          email: "h@x.com",
+          avatarUrl: "",
+          role: "owner",
+        },
+      ],
       ["DELETE", `/api/admin/admins/${created.body.admin.id}`, {}],
     ];
     for (const [method, path, payload] of forbidden) {
@@ -556,7 +664,11 @@ test("owner-only account management: admins can never reach it", async () => {
         method === "GET"
           ? await admin.request(path)
           : await admin.json(path, method, payload, adminCsrf);
-      assert.equal(response.status, 403, `${method} ${path} must be owner-only`);
+      assert.equal(
+        response.status,
+        403,
+        `${method} ${path} must be owner-only`,
+      );
       assert.equal(response.body.error, "owner-only");
     }
 
@@ -566,21 +678,35 @@ test("owner-only account management: admins can never reach it", async () => {
     const product = await admin.json(
       "/api/admin/products",
       "POST",
-      { revision: (await admin.request("/api/admin/content")).body.revision, product: { name: "منتج المشرف", desc: "وصف", category: "أجبان" } },
+      {
+        revision: (await admin.request("/api/admin/content")).body.revision,
+        product: { name: "منتج المشرف", desc: "وصف", category: "أجبان" },
+      },
       adminCsrf,
     );
     assert.equal(product.status, 201);
 
     // --- owner-only guards ---
     const self = (await owner.request("/api/admin/session")).body.id;
-    const selfDelete = await owner.json(`/api/admin/admins/${self}`, "DELETE", {}, ownerCsrf);
+    const selfDelete = await owner.json(
+      `/api/admin/admins/${self}`,
+      "DELETE",
+      {},
+      ownerCsrf,
+    );
     assert.equal(selfDelete.status, 409);
     assert.equal(selfDelete.body.error, "cannot-delete-self");
 
     const demote = await owner.json(
       `/api/admin/admins/${self}`,
       "PUT",
-      { username: "owner", displayName: "المالك", email: OWNER.email, avatarUrl: "", role: "admin" },
+      {
+        username: "owner",
+        displayName: "المالك",
+        email: OWNER.email,
+        avatarUrl: "",
+        role: "admin",
+      },
       ownerCsrf,
     );
     assert.equal(demote.status, 409);
@@ -596,17 +722,29 @@ test("owner-only account management: admins can never reach it", async () => {
         email: "editor2@elpaze.online",
         avatarUrl: "",
         role: "admin",
-        password: "editor-long-password-2",
+        password: "kitchen-secret-pass-2",
       },
       ownerCsrf,
     );
     assert.equal(edited.status, 200);
     assert.equal(edited.body.admin.username, "editor2");
-    assert.equal((await admin.request("/api/admin/session")).status, 401, "a password change revokes sessions");
+    assert.equal(
+      (await admin.request("/api/admin/session")).status,
+      401,
+      "a password change revokes sessions",
+    );
 
-    const removed = await owner.json(`/api/admin/admins/${created.body.admin.id}`, "DELETE", {}, ownerCsrf);
+    const removed = await owner.json(
+      `/api/admin/admins/${created.body.admin.id}`,
+      "DELETE",
+      {},
+      ownerCsrf,
+    );
     assert.equal(removed.status, 200);
-    assert.equal((await owner.request("/api/admin/admins")).body.items.length, 1);
+    assert.equal(
+      (await owner.request("/api/admin/admins")).body.items.length,
+      1,
+    );
   } finally {
     await fresh.close();
   }
@@ -626,20 +764,29 @@ test("profile self-service: details, password change and security question", asy
         username: "editor",
         displayName: "محرر",
         email: "editor@elpaze.online",
-        password: "editor-long-password-1",
+        password: "kitchen-secret-pass-1",
         role: "admin",
       },
       ownerCsrf,
     );
 
-    const login = await loginWithSecurity(admin, "editor@elpaze.online", "editor-long-password-1", "");
+    const login = await loginWithSecurity(
+      admin,
+      "editor@elpaze.online",
+      "kitchen-secret-pass-1",
+      "",
+    );
     const adminCsrf = { "x-csrf-token": login.body.csrf };
 
     // --- details + avatar ---
     const updated = await admin.json(
       "/api/admin/profile",
       "PUT",
-      { displayName: "محرر أول", email: "editor@elpaze.online", avatarUrl: "/uploads/abc.png" },
+      {
+        displayName: "محرر أول",
+        email: "editor@elpaze.online",
+        avatarUrl: "/uploads/abc.png",
+      },
       adminCsrf,
     );
     assert.equal(updated.status, 200);
@@ -663,7 +810,10 @@ test("profile self-service: details, password change and security question", asy
     const wrongCurrent = await admin.json(
       "/api/admin/profile/password",
       "PUT",
-      { currentPassword: "not-the-password", newPassword: "editor-long-password-2" },
+      {
+        currentPassword: "not-the-password",
+        newPassword: "kitchen-secret-pass-2",
+      },
       adminCsrf,
     );
     assert.equal(wrongCurrent.status, 401);
@@ -672,7 +822,10 @@ test("profile self-service: details, password change and security question", asy
     const changed = await admin.json(
       "/api/admin/profile/password",
       "PUT",
-      { currentPassword: "editor-long-password-1", newPassword: "editor-long-password-2" },
+      {
+        currentPassword: "kitchen-secret-pass-1",
+        newPassword: "kitchen-secret-pass-2",
+      },
       adminCsrf,
     );
     assert.equal(changed.status, 200);
@@ -681,7 +834,7 @@ test("profile self-service: details, password change and security question", asy
     const otherDevice = fresh.createClient();
     const oldLogin = await otherDevice.json("/api/admin/login", "POST", {
       identifier: "editor@elpaze.online",
-      password: "editor-long-password-1",
+      password: "kitchen-secret-pass-1",
     });
     assert.equal(oldLogin.status, 401);
 
@@ -689,15 +842,24 @@ test("profile self-service: details, password change and security question", asy
     const setQuestion = await admin.json(
       "/api/admin/profile/security",
       "PUT",
-      { securityQuestion: "أول مدرسة؟", securityAnswer: "النهضة", currentAnswer: "" },
+      {
+        securityQuestion: "أول مدرسة؟",
+        securityAnswer: "النهضة",
+        currentAnswer: "",
+      },
       adminCsrf,
     );
     assert.equal(setQuestion.status, 200);
     assert.equal(setQuestion.body.profile.hasSecurityQuestion, true);
     // The question itself is visible to its owner, the answer never is.
-    assert.equal((await admin.request("/api/admin/profile")).body.securityQuestion, "أول مدرسة؟");
     assert.equal(
-      JSON.stringify((await admin.request("/api/admin/profile")).body).includes("النهضة"),
+      (await admin.request("/api/admin/profile")).body.securityQuestion,
+      "أول مدرسة؟",
+    );
+    assert.equal(
+      JSON.stringify((await admin.request("/api/admin/profile")).body).includes(
+        "النهضة",
+      ),
       false,
     );
 
@@ -705,7 +867,11 @@ test("profile self-service: details, password change and security question", asy
     const wrongAnswer = await admin.json(
       "/api/admin/profile/security",
       "PUT",
-      { securityQuestion: "سؤال جديد؟", securityAnswer: "إجابة", currentAnswer: "خطأ" },
+      {
+        securityQuestion: "سؤال جديد؟",
+        securityAnswer: "إجابة",
+        currentAnswer: "خطأ",
+      },
       adminCsrf,
     );
     assert.equal(wrongAnswer.status, 401);
@@ -714,7 +880,11 @@ test("profile self-service: details, password change and security question", asy
     const replaced = await admin.json(
       "/api/admin/profile/security",
       "PUT",
-      { securityQuestion: "سؤال جديد؟", securityAnswer: "إجابة جديدة", currentAnswer: "النهضة" },
+      {
+        securityQuestion: "سؤال جديد؟",
+        securityAnswer: "إجابة جديدة",
+        currentAnswer: "النهضة",
+      },
       adminCsrf,
     );
     assert.equal(replaced.status, 200);
@@ -722,7 +892,7 @@ test("profile self-service: details, password change and security question", asy
     // The next login asks the replacement question.
     const nextLogin = await fresh.json("/api/admin/login", "POST", {
       identifier: "editor@elpaze.online",
-      password: "editor-long-password-2",
+      password: "kitchen-secret-pass-2",
     });
     assert.equal(nextLogin.body.requiresSecurityAnswer, true);
     assert.equal(nextLogin.body.question, "سؤال جديد؟");
@@ -731,7 +901,13 @@ test("profile self-service: details, password change and security question", asy
     const ownerEdit = await admin.json(
       `/api/admin/admins/${(await owner.request("/api/admin/session")).body.id}`,
       "PUT",
-      { username: "owner", displayName: "h", email: "h@x.com", avatarUrl: "", role: "owner" },
+      {
+        username: "owner",
+        displayName: "h",
+        email: "h@x.com",
+        avatarUrl: "",
+        role: "owner",
+      },
       adminCsrf,
     );
     assert.equal(ownerEdit.status, 403);
@@ -766,7 +942,10 @@ test("uploads: only real images are stored, with safe names outside the app tree
     const accepted = await upload(png, "شعار.png", "image/png");
     assert.equal(accepted.status, 201);
     assert.match(accepted.body.upload.filename, /^[a-f0-9]{32}\.png$/);
-    assert.equal(accepted.body.upload.url, `/uploads/${accepted.body.upload.filename}`);
+    assert.equal(
+      accepted.body.upload.url,
+      `/uploads/${accepted.body.upload.filename}`,
+    );
 
     // The file is served with a correct type and long-lived caching.
     const served = await fresh.request(accepted.body.upload.url);
@@ -778,8 +957,16 @@ test("uploads: only real images are stored, with safe names outside the app tree
     // Rejected: a script renamed to .png, an SVG, an HTML file and an empty file.
     for (const [bytes, name, type] of [
       [Buffer.from("<?php system($_GET['c']); ?>"), "evil.png", "image/png"],
-      [Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'></svg>"), "x.svg", "image/svg+xml"],
-      [Buffer.from("<!doctype html><script>alert(1)</script>"), "x.png", "image/png"],
+      [
+        Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
+        "x.svg",
+        "image/svg+xml",
+      ],
+      [
+        Buffer.from("<!doctype html><script>alert(1)</script>"),
+        "x.png",
+        "image/png",
+      ],
       [Buffer.from("MZ\u0090\u0000"), "x.exe", "application/octet-stream"],
     ]) {
       const rejected = await upload(bytes, name, type);
@@ -805,7 +992,11 @@ test("uploads: only real images are stored, with safe names outside the app tree
       "/uploads/abc.png",
       "/uploads/%2e%2e%2f.env",
     ]) {
-      assert.equal((await fresh.request(path)).status, 404, `${path} must not be served`);
+      assert.equal(
+        (await fresh.request(path)).status,
+        404,
+        `${path} must not be served`,
+      );
     }
 
     // Regular admins may upload images (it is ordinary dashboard work).
@@ -816,13 +1007,18 @@ test("uploads: only real images are stored, with safe names outside the app tree
         username: "editor",
         displayName: "محرر",
         email: "editor@elpaze.online",
-        password: "editor-long-password-1",
+        password: "kitchen-secret-pass-1",
         role: "admin",
       },
       { "x-csrf-token": (await owner.request("/api/admin/session")).body.csrf },
     );
     assert.equal(created.status, 201);
-    const login = await loginWithSecurity(admin, "editor@elpaze.online", "editor-long-password-1", "");
+    const login = await loginWithSecurity(
+      admin,
+      "editor@elpaze.online",
+      "kitchen-secret-pass-1",
+      "",
+    );
     const form = new FormData();
     form.append("file", new Blob([png], { type: "image/png" }), "a.png");
     const adminUpload = await admin.request("/api/admin/uploads", {
@@ -880,7 +1076,15 @@ test("events drive the public announcements, and the live stream pushes changes"
     const invalid = await owner.json(
       "/api/admin/events",
       "POST",
-      { title: "", description: "x", type: "party", imageUrl: "", startAt: "", endAt: "", active: true },
+      {
+        title: "",
+        description: "x",
+        type: "party",
+        imageUrl: "",
+        startAt: "",
+        endAt: "",
+        active: true,
+      },
       csrf,
     );
     assert.equal(invalid.status, 422);
@@ -894,7 +1098,10 @@ test("events drive the public announcements, and the live stream pushes changes"
     );
     assert.equal(hidden.status, 200);
     assert.equal((await fresh.request("/api/content")).body.events.length, 0);
-    assert.equal((await owner.request("/api/admin/events")).body.items.length, 1);
+    assert.equal(
+      (await owner.request("/api/admin/events")).body.items.length,
+      1,
+    );
 
     // A dangerous image URL is refused.
     const badUrl = await owner.json(
@@ -915,7 +1122,9 @@ test("events drive the public announcements, and the live stream pushes changes"
 
     // --- live stream ---
     const controller = new AbortController();
-    const stream = await fetch(`${fresh.base}/api/stream`, { signal: controller.signal });
+    const stream = await fetch(`${fresh.base}/api/stream`, {
+      signal: controller.signal,
+    });
     assert.equal(stream.status, 200);
     assert.match(stream.headers.get("content-type"), /text\/event-stream/);
     const frames = [];
@@ -974,7 +1183,10 @@ test("product availability, quantity and NEW badge round-trip through the public
       const response = await owner.json(
         "/api/admin/products",
         "POST",
-        { revision: (await owner.request("/api/admin/content")).body.revision, product },
+        {
+          revision: (await owner.request("/api/admin/content")).body.revision,
+          product,
+        },
         csrf,
       );
       assert.equal(response.status, 201, JSON.stringify(response.body));
@@ -989,7 +1201,11 @@ test("product availability, quantity and NEW badge round-trip through the public
       isNew: true,
     });
     assert.equal(unlimited.availability, "unlimited");
-    assert.equal(unlimited.quantity, null, "unlimited products are not quantity-tracked");
+    assert.equal(
+      unlimited.quantity,
+      null,
+      "unlimited products are not quantity-tracked",
+    );
     assert.equal(unlimited.isNew, true);
 
     const requestOnly = await make({
@@ -1026,10 +1242,17 @@ test("product availability, quantity and NEW badge round-trip through the public
       const response = await owner.json(
         "/api/admin/products",
         "POST",
-        { revision: (await owner.request("/api/admin/content")).body.revision, product },
+        {
+          revision: (await owner.request("/api/admin/content")).body.revision,
+          product,
+        },
         csrf,
       );
-      assert.equal(response.status, 422, `${JSON.stringify(product)} must be rejected`);
+      assert.equal(
+        response.status,
+        422,
+        `${JSON.stringify(product)} must be rejected`,
+      );
     }
 
     const published = (await fresh.request("/api/content")).body;
@@ -1044,7 +1267,12 @@ test("product availability, quantity and NEW badge round-trip through the public
       "PUT",
       {
         revision: (await owner.request("/api/admin/content")).body.revision,
-        product: { ...soon, availability: "available", quantity: 24, isNew: false },
+        product: {
+          ...soon,
+          availability: "available",
+          quantity: 24,
+          isNew: false,
+        },
       },
       csrf,
     );
@@ -1060,7 +1288,9 @@ test("product availability, quantity and NEW badge round-trip through the public
     );
     assert.equal(removed.status, 200);
     assert.equal(
-      (await fresh.request("/api/content")).body.products.some((p) => p.id === unlimited.id),
+      (await fresh.request("/api/content")).body.products.some(
+        (p) => p.id === unlimited.id,
+      ),
       false,
     );
     void revision;
@@ -1080,10 +1310,21 @@ test("rate limiting still guards the admin login in production settings", async 
       });
       if (response.status === 429) {
         blocked += 1;
-        assert.equal(response.body.error, "too-many-requests");
+        // Two independent brakes may fire first: the per-IP limiter
+        // (too-many-requests) and the per-account backoff (too-many-attempts).
+        assert.ok(
+          ["too-many-requests", "too-many-attempts"].includes(
+            response.body.error,
+          ),
+          `unexpected 429 body: ${JSON.stringify(response.body)}`,
+        );
+        assert.ok(Number(response.headers.get("retry-after")) >= 0);
       }
     }
-    assert.ok(blocked > 0, "repeated login attempts must eventually be rate limited");
+    assert.ok(
+      blocked > 0,
+      "repeated login attempts must eventually be rate limited",
+    );
   } finally {
     await strict.close();
   }

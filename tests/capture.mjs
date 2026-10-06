@@ -17,7 +17,9 @@ await page.waitForTimeout(1200);
 const jump = async (index) => {
   const mobile = page.viewportSize().width < 640;
   if (mobile) {
-    await page.getByRole("button", { name: "فتح القائمة", exact: true }).click();
+    await page
+      .getByRole("button", { name: "فتح القائمة", exact: true })
+      .click();
     await page.locator(".mobile-menu button").nth(index).click();
   } else {
     await page.locator(".dots-nav button").nth(index).click();
@@ -35,9 +37,16 @@ const setTheme = async (theme) => {
   await page.waitForTimeout(450);
 };
 
-console.log("images", await page.locator(".hero-product img").evaluateAll((imgs) =>
-  imgs.map((i) => ({ src: i.currentSrc || i.src, complete: i.complete, width: i.naturalWidth })),
-));
+console.log(
+  "images",
+  await page.locator(".hero-product img").evaluateAll((imgs) =>
+    imgs.map((i) => ({
+      src: i.currentSrc || i.src,
+      complete: i.complete,
+      width: i.naturalWidth,
+    })),
+  ),
+);
 
 for (const theme of ["light", "dark"]) {
   await setTheme(theme);

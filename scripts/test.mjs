@@ -12,18 +12,30 @@ const mode = process.argv[2] ?? "all";
 
 const SUITES = {
   api: ["tests/api.test.mjs"],
+  security: ["tests/security.test.mjs"],
   site: ["tests/site.test.mjs"],
   admin: ["tests/admin.test.mjs"],
-  all: ["tests/api.test.mjs", "tests/site.test.mjs", "tests/admin.test.mjs"],
+  layout: ["tests/layout.test.mjs"],
+  all: [
+    "tests/api.test.mjs",
+    "tests/security.test.mjs",
+    "tests/site.test.mjs",
+    "tests/admin.test.mjs",
+    "tests/layout.test.mjs",
+  ],
 };
 
 const files = SUITES[mode];
 if (!files) {
-  console.error(`[test] unknown suite "${mode}" (expected api|site|admin|all)`);
+  console.error(
+    `[test] unknown suite "${mode}" (expected api|security|site|admin|layout|all)`,
+  );
   process.exit(2);
 }
 
-const needsServers = mode !== "api";
+// The API and security suites spin up an in-process app on a random port;
+// everything else needs the shared API + Vite pair on 3001/5173.
+const needsServers = !["api", "security"].includes(mode);
 
 /**
  * The suites talk to fixed ports. A leftover server from an earlier run would
@@ -110,25 +122,33 @@ try {
     children.push(api);
 
     const viteBin = join(root, "node_modules/vite/bin/vite.js");
-    if (!existsSync(viteBin)) throw new Error("vite is not installed — run npm ci first");
-    const vite = spawn(process.execPath, [viteBin, "--host", "0.0.0.0", "--port", "5173"], {
-      cwd: root,
-      env: { ...process.env, NODE_ENV: "development" },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    if (!existsSync(viteBin))
+      throw new Error("vite is not installed — run npm ci first");
+    const vite = spawn(
+      process.execPath,
+      [viteBin, "--host", "0.0.0.0", "--port", "5173"],
+      {
+        cwd: root,
+        env: { ...process.env, NODE_ENV: "development" },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     vite.stdout.on("data", (b) => process.stdout.write(`[vite] ${b}`));
     vite.stderr.on("data", (b) => process.stderr.write(`[vite] ${b}`));
     children.push(vite);
 
     const apiUp = await waitFor("http://127.0.0.1:3001/api/health", 30000);
     const webUp = await waitFor("http://127.0.0.1:5173/", 60000);
-    if (!apiUp || !webUp) throw new Error(`servers failed to start (api=${apiUp} web=${webUp})`);
+    if (!apiUp || !webUp)
+      throw new Error(`servers failed to start (api=${apiUp} web=${webUp})`);
     console.log("[test] servers ready on :3001 and :5173");
   }
 
   // TEST_FILTER narrows a run while iterating on one case, e.g.
   // TEST_FILTER="dark/light" npm run test:admin
-  const filterArgs = process.env.TEST_FILTER ? [`--test-name-pattern=${process.env.TEST_FILTER}`] : [];
+  const filterArgs = process.env.TEST_FILTER
+    ? [`--test-name-pattern=${process.env.TEST_FILTER}`]
+    : [];
 
   exitCode = await new Promise((resolveCode) => {
     const runner = spawn(
@@ -136,7 +156,12 @@ try {
       ["--test", "--test-concurrency=1", ...filterArgs, ...files],
       {
         cwd: root,
-        env: { ...process.env, TEST_DATA_DIR: dataDir, TEST_URL: "http://127.0.0.1:5173" },
+        env: {
+          ...process.env,
+          TEST_DATA_DIR: dataDir,
+          TEST_URL: "http://127.0.0.1:5173",
+          TEST_API: "http://127.0.0.1:3001",
+        },
         stdio: "inherit",
       },
     );
@@ -144,7 +169,9 @@ try {
     runner.on("exit", (code) => resolveCode(code ?? 1));
   });
 } catch (error) {
-  console.error(`[test] ${error instanceof Error ? error.message : String(error)}`);
+  console.error(
+    `[test] ${error instanceof Error ? error.message : String(error)}`,
+  );
   exitCode = 1;
 } finally {
   stop();

@@ -16,6 +16,18 @@ export const OWNER = {
 };
 
 /**
+ * The Owner account the browser suites create through the dashboard's first-run
+ * flow (admin.test.mjs) and then reuse in later suites on the same database.
+ */
+export const DASHBOARD_OWNER = {
+  displayName: "محمد نجيب",
+  email: "owner@elpaze.online",
+  password: "owner-long-password-1",
+  question: "اسم أول حيوان أليف؟",
+  answer: "مشمش",
+};
+
+/**
  * Runs the whole first-run flow for an Owner account and returns a client that
  * is logged in with the final credentials (password + security answer).
  *
@@ -42,16 +54,26 @@ export async function setupOwner(api, client = api, overrides = {}) {
     },
     { "x-csrf-token": created.body.csrf },
   );
-  const session = await loginWithSecurity(client, owner.email, owner.finalPassword, owner.answer);
+  const session = await loginWithSecurity(
+    client,
+    owner.email,
+    owner.finalPassword,
+    owner.answer,
+  );
   return { owner, created, completed, session };
 }
 
 /** Logs in, answering the security question when the account has one. */
 export async function loginWithSecurity(client, identifier, password, answer) {
-  const login = await client.json("/api/admin/login", "POST", { identifier, password });
+  const login = await client.json("/api/admin/login", "POST", {
+    identifier,
+    password,
+  });
   if (login.status !== 200) return login;
   if (login.body.requiresSecurityAnswer) {
-    const verified = await client.json("/api/admin/login/security", "POST", { answer });
+    const verified = await client.json("/api/admin/login/security", "POST", {
+      answer,
+    });
     return verified;
   }
   return login;
@@ -83,8 +105,14 @@ export async function startTestServer(options = {}) {
       const headers = { ...(rest.headers ?? {}) };
       if (!anonymous && jar.size)
         headers.cookie = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
-      const response = await fetch(base + path, { ...rest, headers, redirect: "manual" });
-      const setCookie = anonymous ? [] : (response.headers.getSetCookie?.() ?? []);
+      const response = await fetch(base + path, {
+        ...rest,
+        headers,
+        redirect: "manual",
+      });
+      const setCookie = anonymous
+        ? []
+        : (response.headers.getSetCookie?.() ?? []);
       for (const cookie of setCookie) {
         const [pair] = cookie.split(";");
         const index = pair.indexOf("=");
@@ -110,7 +138,13 @@ export async function startTestServer(options = {}) {
         body: JSON.stringify(payload),
       });
 
-    return { request, json, jar, cookies: () => new Map(jar), clear: () => jar.clear() };
+    return {
+      request,
+      json,
+      jar,
+      cookies: () => new Map(jar),
+      clear: () => jar.clear(),
+    };
   };
 
   const primary = createClient();
@@ -133,4 +167,5 @@ export async function startTestServer(options = {}) {
   };
 }
 
-export const readFile = (path) => import("node:fs").then((fs) => fs.readFileSync(path, "utf8"));
+export const readFile = (path) =>
+  import("node:fs").then((fs) => fs.readFileSync(path, "utf8"));

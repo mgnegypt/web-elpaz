@@ -14,7 +14,9 @@
     "test:api": "node scripts/test.mjs api",
     "test:admin": "node scripts/test.mjs admin",
     "test:all": "node scripts/test.mjs all",
-    "test:capture": "node tests/capture.mjs"
+    "test:capture": "node tests/capture.mjs",
+    "test:security": "node scripts/test.mjs security",
+    "test:layout": "node scripts/test.mjs layout"
   },
   "dependencies": {
     "@fontsource/cairo": "^5.3.0",

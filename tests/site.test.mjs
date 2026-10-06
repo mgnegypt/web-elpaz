@@ -35,7 +35,9 @@ async function setup(
 /** Navigate and wait for the transition lock to clear. */
 async function go(page, n, { mobile = false, reduced = true } = {}) {
   if (mobile) {
-    await page.getByRole("button", { name: "فتح القائمة", exact: true }).click();
+    await page
+      .getByRole("button", { name: "فتح القائمة", exact: true })
+      .click();
     await page.locator(".mobile-menu button").nth(n).click();
   } else {
     await page.locator(".dots-nav button").nth(n).click();
@@ -67,18 +69,29 @@ for (const [w, h, label] of VIEWPORTS) {
         doc: document.documentElement.scrollWidth,
         bodyOverflowX: getComputedStyle(document.body).overflowX,
       }));
-      assert.equal(sizes.height, h, `section ${i} must fill the viewport height`);
+      assert.equal(
+        sizes.height,
+        h,
+        `section ${i} must fill the viewport height`,
+      );
       assert.ok(
         sizes.scroll <= sizes.width + 1,
         `section ${i} overflows horizontally: ${JSON.stringify(sizes)}`,
       );
-      assert.equal(sizes.doc, w, `no document-level horizontal overflow on section ${i}`);
+      assert.equal(
+        sizes.doc,
+        w,
+        `no document-level horizontal overflow on section ${i}`,
+      );
       if (i === 1 && w < 640) {
         await page
           .getByRole("button", { name: "تفاصيل جبن موزاريلا مبشور" })
           .click();
         const box = await page.locator(".product-modal").boundingBox();
-        assert.ok(box.width <= w && box.height <= h * 0.95 + 1, "modal fits the phone");
+        assert.ok(
+          box.width <= w && box.height <= h * 0.95 + 1,
+          "modal fits the phone",
+        );
         await page.getByRole("button", { name: "إغلاق تفاصيل المنتج" }).click();
       }
     }
@@ -107,10 +120,18 @@ test("phones reserve a bottom utility area clear of order buttons", async () => 
       .filter(Boolean)
       .map((node) => {
         const rect = node.getBoundingClientRect();
-        return { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom };
+        return {
+          top: rect.top,
+          left: rect.left,
+          right: rect.right,
+          bottom: rect.bottom,
+        };
       }),
   );
-  assert.ok(dock.length >= 2, "expected the fixed phone controls to be present");
+  assert.ok(
+    dock.length >= 2,
+    "expected the fixed phone controls to be present",
+  );
   const overlaps = dock.some(
     (rect) =>
       !(
@@ -147,11 +168,23 @@ test("phones reserve a bottom utility area clear of order buttons", async () => 
 
 test("touch targets for small pagination and review controls stay at least 44px", async () => {
   const { page } = await setup(390, 844, { reduced: true });
-  const hero = await page.locator(".hero-pagination button").first().boundingBox();
-  assert.ok(hero.width >= 44 && hero.height >= 44, `hero pagination ${JSON.stringify(hero)}`);
+  const hero = await page
+    .locator(".hero-pagination button")
+    .first()
+    .boundingBox();
+  assert.ok(
+    hero.width >= 44 && hero.height >= 44,
+    `hero pagination ${JSON.stringify(hero)}`,
+  );
   await go(page, 5, { mobile: true });
-  const review = await page.locator(".review-dots button").first().boundingBox();
-  assert.ok(review.width >= 44 && review.height >= 44, `review dots ${JSON.stringify(review)}`);
+  const review = await page
+    .locator(".review-dots button")
+    .first()
+    .boundingBox();
+  assert.ok(
+    review.width >= 44 && review.height >= 44,
+    `review dots ${JSON.stringify(review)}`,
+  );
   await page.close();
 });
 
@@ -162,7 +195,9 @@ test("desktop: carousel, category filter, product dialog focus trap and WhatsApp
   const { page, errors } = await setup(1440, 900, { reduced: true });
   assert.equal(await page.locator(".hero-product img").count(), 4);
 
-  await page.getByRole("button", { name: "المنتج التالي", exact: true }).click();
+  await page
+    .getByRole("button", { name: "المنتج التالي", exact: true })
+    .click();
   await page.waitForTimeout(700);
   assert.match(await page.locator(".hero-copy h1").innerText(), /عسل/);
 
@@ -171,7 +206,9 @@ test("desktop: carousel, category filter, product dialog focus trap and WhatsApp
   await page.getByRole("button", { name: "زيوت", exact: true }).click();
   assert.equal(await page.locator(".is-active .product-card").count(), 1);
 
-  const trigger = page.getByRole("button", { name: "تفاصيل زيت زيتون طبيعي خام" });
+  const trigger = page.getByRole("button", {
+    name: "تفاصيل زيت زيتون طبيعي خام",
+  });
   await trigger.click();
   const dialog = page.getByRole("dialog");
   await dialog.waitFor();
@@ -185,7 +222,9 @@ test("desktop: carousel, category filter, product dialog focus trap and WhatsApp
   await page.mouse.wheel(0, 400);
   await page.waitForTimeout(350);
   assert.ok(
-    await page.locator(".section-1").evaluate((el) => el.classList.contains("is-active")),
+    await page
+      .locator(".section-1")
+      .evaluate((el) => el.classList.contains("is-active")),
   );
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "detached" });
@@ -202,13 +241,19 @@ test("desktop: gallery lightbox, FAQ accordion and section navigation still work
   const dialog = page.getByRole("dialog");
   await dialog.waitFor();
   await page.keyboard.press("ArrowLeft");
-  assert.equal(await page.locator(".lightbox-caption h2").innerText(), "المزرعة");
+  assert.equal(
+    await page.locator(".lightbox-caption h2").innerText(),
+    "المزرعة",
+  );
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "detached" });
 
   await go(page, 5);
   await page.getByRole("button", { name: "رأي العميل 3" }).click();
-  assert.equal(await page.locator(".review-person div>span").innerText(), "عميل");
+  assert.equal(
+    await page.locator(".review-person div>span").innerText(),
+    "عميل",
+  );
 
   await go(page, 6);
   const question = page.getByRole("button", { name: /هل يمكن التعبئة/ });
@@ -229,12 +274,12 @@ test("scrollable section edge dwell prevents accidental transitions", async () =
   await page.mouse.wheel(0, 400);
   await page.waitForTimeout(350);
   assert.ok(await page.locator(".section-1.is-active").isVisible());
-  assert.ok((await page.locator(".section-1").evaluate((el) => el.scrollTop)) > 0);
-  await page
-    .locator(".section-1")
-    .evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-    });
+  assert.ok(
+    (await page.locator(".section-1").evaluate((el) => el.scrollTop)) > 0,
+  );
+  await page.locator(".section-1").evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
   await page.waitForTimeout(50);
   await page.mouse.wheel(0, 100);
   await page.waitForTimeout(100);
@@ -253,13 +298,30 @@ test("mobile: horizontal product swipe changes only the product, vertical swipe 
   await page.mouse.move(100, 405, { steps: 5 });
   await page.mouse.up();
   await page.waitForTimeout(700);
-  assert.equal(await page.locator(".hero-copy h1").innerText(), "عسل أبيض طبيعي");
+  assert.equal(
+    await page.locator(".hero-copy h1").innerText(),
+    "عسل أبيض طبيعي",
+  );
   assert.ok(await page.locator(".section-0.is-active").isVisible());
   await carousel.evaluate((el) => {
-    const start = new Touch({ identifier: 1, target: el, clientX: 190, clientY: 500 });
-    el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, touches: [start] }));
-    const end = new Touch({ identifier: 1, target: el, clientX: 195, clientY: 300 });
-    el.dispatchEvent(new TouchEvent("touchend", { bubbles: true, changedTouches: [end] }));
+    const start = new Touch({
+      identifier: 1,
+      target: el,
+      clientX: 190,
+      clientY: 500,
+    });
+    el.dispatchEvent(
+      new TouchEvent("touchstart", { bubbles: true, touches: [start] }),
+    );
+    const end = new Touch({
+      identifier: 1,
+      target: el,
+      clientX: 195,
+      clientY: 300,
+    });
+    el.dispatchEvent(
+      new TouchEvent("touchend", { bubbles: true, changedTouches: [end] }),
+    );
   });
   await page.locator(".section-1.is-active").waitFor();
   await page.close();
@@ -295,7 +357,11 @@ test("wholesale form validates, saves to the backend, and keeps WhatsApp separat
   await page.getByRole("button", { name: "إرسال الطلب" }).click();
   assert.ok(await page.locator("#consent-error").isVisible());
   assert.equal(await page.locator(".form-success").count(), 0);
-  assert.equal(await page.evaluate(() => window.__opened), "", "WhatsApp must not auto-open");
+  assert.equal(
+    await page.evaluate(() => window.__opened),
+    "",
+    "WhatsApp must not auto-open",
+  );
 
   await page.locator("#storage-consent").check();
   await page.getByRole("button", { name: "إرسال الطلب" }).click();
@@ -330,7 +396,10 @@ test("first visit follows the system preference (light and dark)", async () => {
   const lightBg = await light.page.evaluate(
     () => getComputedStyle(document.documentElement).backgroundColor,
   );
-  assert.equal(await light.page.evaluate(() => document.documentElement.style.colorScheme), "light");
+  assert.equal(
+    await light.page.evaluate(() => document.documentElement.style.colorScheme),
+    "light",
+  );
   await light.page.close();
 
   const dark = await setup(1280, 800, { colorScheme: "dark" });
@@ -341,7 +410,10 @@ test("first visit follows the system preference (light and dark)", async () => {
   const darkBg = await dark.page.evaluate(
     () => getComputedStyle(document.documentElement).backgroundColor,
   );
-  assert.equal(await dark.page.evaluate(() => document.documentElement.style.colorScheme), "dark");
+  assert.equal(
+    await dark.page.evaluate(() => document.documentElement.style.colorScheme),
+    "dark",
+  );
   assert.notEqual(darkBg, lightBg, "dark mode must actually repaint the page");
 
   // A card surface must flip too, not just the page background.
@@ -350,13 +422,20 @@ test("first visit follows the system preference (light and dark)", async () => {
     .locator(".product-card")
     .first()
     .evaluate((el) => getComputedStyle(el).backgroundColor);
-  assert.notEqual(cardBg, "rgb(255, 255, 255)", "cards must not stay white in dark mode");
+  assert.notEqual(
+    cardBg,
+    "rgb(255, 255, 255)",
+    "cards must not stay white in dark mode",
+  );
   await dark.page.close();
 });
 
 test("explicit theme choice persists across reloads via elbaz-theme", async () => {
   const { page } = await setup(1280, 800, { colorScheme: "light" });
-  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "light");
+  assert.equal(
+    await page.evaluate(() => document.documentElement.dataset.theme),
+    "light",
+  );
 
   await page.locator(".theme-toggle").click();
   await page.waitForFunction(
@@ -364,7 +443,10 @@ test("explicit theme choice persists across reloads via elbaz-theme", async () =
     null,
     { timeout: 5000 },
   );
-  assert.equal(await page.evaluate(() => localStorage.getItem("elbaz-theme")), "dark");
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("elbaz-theme")),
+    "dark",
+  );
 
   await page.reload();
   await page.locator(".loader").waitFor({ state: "detached", timeout: 15000 });
@@ -376,8 +458,13 @@ test("explicit theme choice persists across reloads via elbaz-theme", async () =
 
   // And switching back must persist the other way too.
   await page.locator(".theme-toggle").click();
-  await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
-  assert.equal(await page.evaluate(() => localStorage.getItem("elbaz-theme")), "light");
+  await page.waitForFunction(
+    () => document.documentElement.dataset.theme === "light",
+  );
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("elbaz-theme")),
+    "light",
+  );
   await page.close();
 });
 
@@ -392,10 +479,15 @@ test("theme works without localStorage (private mode)", async () => {
       });
     },
   });
-  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "dark");
+  assert.equal(
+    await page.evaluate(() => document.documentElement.dataset.theme),
+    "dark",
+  );
   // Toggling must still work even though persistence is impossible.
   await page.locator(".theme-toggle").click();
-  await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+  await page.waitForFunction(
+    () => document.documentElement.dataset.theme === "light",
+  );
   await page.close();
 });
 
@@ -405,16 +497,28 @@ test("no flash of the wrong theme: theme is applied before React boots", async (
   const script = await page.evaluate(() => {
     const nodes = [...document.querySelectorAll("script[src]")];
     const init = nodes.find((n) => n.getAttribute("src") === "/theme-init.js");
-    return init ? { inHead: init.closest("head") !== null, defer: init.hasAttribute("defer") } : null;
+    return init
+      ? {
+          inHead: init.closest("head") !== null,
+          defer: init.hasAttribute("defer"),
+        }
+      : null;
   });
   assert.ok(script, "public/theme-init.js must be loaded");
   assert.equal(script.inHead, true);
-  assert.equal(script.defer, false, "it must not be deferred, or the theme will flash");
+  assert.equal(
+    script.defer,
+    false,
+    "it must not be deferred, or the theme will flash",
+  );
   await page.close();
 });
 
 test("reduced motion switches the theme immediately, without the circular reveal", async () => {
-  const { page } = await setup(1280, 800, { colorScheme: "light", reduced: true });
+  const { page } = await setup(1280, 800, {
+    colorScheme: "light",
+    reduced: true,
+  });
   const usedViewTransition = await page.evaluate(() => {
     let called = false;
     const original = document.startViewTransition;
@@ -431,7 +535,11 @@ test("reduced motion switches the theme immediately, without the circular reveal
   const immediately = await page.evaluate(
     () => document.documentElement.dataset.theme,
   );
-  assert.equal(immediately, "dark", "the switch must be instant under reduced motion");
+  assert.equal(
+    immediately,
+    "dark",
+    "the switch must be instant under reduced motion",
+  );
   if (usedViewTransition) {
     assert.equal(await page.evaluate(() => window.__vtCalled()), false);
   }
@@ -441,11 +549,14 @@ test("reduced motion switches the theme immediately, without the circular reveal
 test("theme toggle is at least 44px and replaced the sound control entirely", async () => {
   const { page } = await setup(390, 844, { reduced: true });
   const box = await page.locator(".theme-toggle").boundingBox();
-  assert.ok(box.width >= 44 && box.height >= 44, `touch target ${JSON.stringify(box)}`);
+  assert.ok(
+    box.width >= 44 && box.height >= 44,
+    `touch target ${JSON.stringify(box)}`,
+  );
   // No trace of the old sound feature anywhere in the DOM.
   assert.equal(await page.locator(".sound-toggle").count(), 0);
   assert.equal(await page.locator('[aria-label*="الصوت"]').count(), 0);
-  assert.equal(await page.locator('[aria-pressed]').count() >= 1, true);
+  assert.equal((await page.locator("[aria-pressed]").count()) >= 1, true);
   await page.close();
 });
 
@@ -461,9 +572,15 @@ test("dark mode keeps the brand blue, cream and gold accents", async () => {
   const blueSection = await page
     .locator(".section-3")
     .evaluate((el) => getComputedStyle(el).backgroundColor);
-  assert.equal(blueSection, "rgb(30, 63, 168)", "brand blue sections stay blue in dark mode");
+  assert.equal(
+    blueSection,
+    "rgb(30, 63, 168)",
+    "brand blue sections stay blue in dark mode",
+  );
   const gold = await page.evaluate(() =>
-    getComputedStyle(document.documentElement).getPropertyValue("--brand-gold").trim(),
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--brand-gold")
+      .trim(),
   );
   assert.equal(gold, "#e9be2e");
   await page.close();
@@ -487,7 +604,11 @@ async function sampleTransition(page, targetIndex, expectedDirection) {
           if (!wave) return false;
           for (const sheet of wave.querySelectorAll(".milk-sheet")) {
             const rect = sheet.getBoundingClientRect();
-            if (rect.top <= 1 && rect.bottom >= window.innerHeight - 1 && rect.width > 0)
+            if (
+              rect.top <= 1 &&
+              rect.bottom >= window.innerHeight - 1 &&
+              rect.width > 0
+            )
               return true;
           }
           return false;
@@ -505,12 +626,20 @@ async function sampleTransition(page, targetIndex, expectedDirection) {
             if (wave.classList.contains(direction)) directionOk = true;
             if (!document.querySelector(".dots-nav")?.hasAttribute("inert"))
               inertWhileTransitioning = false;
-            sheetCount = Math.max(sheetCount, wave.querySelectorAll(".milk-sheet").length);
+            sheetCount = Math.max(
+              sheetCount,
+              wave.querySelectorAll(".milk-sheet").length,
+            );
           }
           samples.push([activeIndex(), covered(), Boolean(wave)]);
           if (performance.now() - start > 2200) {
             clearInterval(timer);
-            resolve({ samples, directionOk, inertWhileTransitioning, sheetCount });
+            resolve({
+              samples,
+              directionOk,
+              inertWhileTransitioning,
+              sheetCount,
+            });
           }
         }, 25);
       }),
@@ -526,7 +655,10 @@ test("milk wave covers the viewport while the section switches (downward)", asyn
     "the section must only switch while the opaque milk covers the viewport",
   );
   assert.ok(result.directionOk, "downward navigation must use the .down wave");
-  assert.ok(result.inertWhileTransitioning, "navigation controls must be inert during the wave");
+  assert.ok(
+    result.inertWhileTransitioning,
+    "navigation controls must be inert during the wave",
+  );
   await page.close();
 });
 
@@ -534,7 +666,10 @@ test("milk wave runs cleanly in both directions and is layered", async () => {
   const { page } = await setup(1440, 900);
   const down = await sampleTransition(page, 1, "down");
   assert.ok(down.samples.some(([index, covered]) => index === 1 && covered));
-  assert.ok(down.sheetCount >= 3, `expected layered sheets, got ${down.sheetCount}`);
+  assert.ok(
+    down.sheetCount >= 3,
+    `expected layered sheets, got ${down.sheetCount}`,
+  );
 
   const up = await sampleTransition(page, 0, "up");
   assert.ok(
@@ -544,9 +679,13 @@ test("milk wave runs cleanly in both directions and is layered", async () => {
   assert.ok(up.directionOk, "backward navigation must use the .up wave");
 
   // The transition must clean up after itself.
-  await page.waitForFunction(() => !document.querySelector(".milk-wave"), null, {
-    timeout: 5000,
-  });
+  await page.waitForFunction(
+    () => !document.querySelector(".milk-wave"),
+    null,
+    {
+      timeout: 5000,
+    },
+  );
   assert.equal(await page.locator(".milk-wave").count(), 0);
   assert.equal(
     await page.locator(".dots-nav").evaluate((el) => el.hasAttribute("inert")),
@@ -576,11 +715,17 @@ test("reduced motion uses a short simplified wave", async () => {
     return {
       sawWave,
       sawSheet,
-      switched: document.querySelector(".section-1")?.classList.contains("is-active"),
+      switched: document
+        .querySelector(".section-1")
+        ?.classList.contains("is-active"),
     };
   });
   assert.ok(result.sawWave, "a simplified wave must still play");
-  assert.equal(result.sawSheet, false, "the layered sheets must be hidden under reduced motion");
+  assert.equal(
+    result.sawSheet,
+    false,
+    "the layered sheets must be hidden under reduced motion",
+  );
   assert.ok(result.switched, "the section must still change");
   await page.close();
 });

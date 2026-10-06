@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { launchBrowser } from "./browser.mjs";
+import { DASHBOARD_OWNER } from "./helper.mjs";
 
 const base = process.env.TEST_URL || "http://127.0.0.1:5173";
 const api = process.env.TEST_API || "http://127.0.0.1:3001";
@@ -12,13 +13,7 @@ const dataDir = process.env.TEST_DATA_DIR || ".data";
 const SHOTS = process.env.TEST_SCREENSHOTS === "1";
 const shotDir = ".playwright";
 
-const OWNER = {
-  displayName: "محمد نجيب",
-  email: "owner@elpaze.online",
-  password: "owner-long-password-1",
-  question: "اسم أول حيوان أليف؟",
-  answer: "مشمش",
-};
+const OWNER = DASHBOARD_OWNER;
 
 let browser;
 
@@ -30,7 +25,8 @@ after(async () => {
   await browser?.close();
 });
 
-const SETUP_TOKEN = () => readFileSync(join(dataDir, "setup-token"), "utf8").trim();
+const SETUP_TOKEN = () =>
+  readFileSync(join(dataDir, "setup-token"), "utf8").trim();
 
 async function openAdmin(options = {}) {
   const page = await browser.newPage({
@@ -55,9 +51,14 @@ async function shot(page, name) {
 
 /** The dashboard sidebar (the quick actions reuse the same labels). */
 const nav = (page) => page.getByRole("navigation", { name: "أقسام اللوحة" });
-const goTo = (page, label) => nav(page).getByRole("button", { name: label, exact: true }).click();
+const goTo = (page, label) =>
+  nav(page).getByRole("button", { name: label, exact: true }).click();
 const openProfile = (page) =>
-  page.locator(".sidebar-foot").getByRole("button", { name: "الملف الشخصي" }).first().click();
+  page
+    .locator(".sidebar-foot")
+    .getByRole("button", { name: "الملف الشخصي" })
+    .first()
+    .click();
 
 /** Opens the public site and waits for the intro loader to finish. */
 async function openSite(viewport = { width: 1280, height: 900 }) {
@@ -74,7 +75,9 @@ async function openSite(viewport = { width: 1280, height: 900 }) {
 /** Navigates the public site to the products section. */
 async function siteGo(page, index) {
   await page.locator(".dots-nav button").nth(index).click();
-  await page.locator(`.section-${index}.is-active`).waitFor({ state: "visible", timeout: 15000 });
+  await page
+    .locator(`.section-${index}.is-active`)
+    .waitFor({ state: "visible", timeout: 15000 });
   await page.waitForTimeout(400);
 }
 
@@ -83,11 +86,17 @@ async function signIn(page, email, password, answer) {
   await page.getByLabel(/البريد الإلكتروني أو اسم المستخدم/).fill(email);
   await page.getByLabel("كلمة المرور", { exact: true }).fill(password);
   await page.getByRole("button", { name: "دخول لوحة التحكم" }).click();
-  await page.getByRole("heading", { name: "سؤال الأمان" }).waitFor({ timeout: 15000 });
+  await page
+    .getByRole("heading", { name: "سؤال الأمان" })
+    .waitFor({ timeout: 15000 });
   await page.getByLabel("الإجابة", { exact: true }).fill(answer);
   await page.getByRole("button", { name: "تأكيد الدخول" }).click();
-  await page.getByRole("heading", { name: "تم تسجيل الدخول بنجاح" }).waitFor({ timeout: 15000 });
-  await page.getByRole("heading", { name: /أهلًا بك/ }).waitFor({ timeout: 20000 });
+  await page
+    .getByRole("heading", { name: "تم تسجيل الدخول بنجاح" })
+    .waitFor({ timeout: 15000 });
+  await page
+    .getByRole("heading", { name: /أهلًا بك/ })
+    .waitFor({ timeout: 20000 });
 }
 
 /** Creates a wholesale request through the public API so the dashboard has data. */
@@ -106,7 +115,10 @@ async function seedRequest(suffix) {
       requestKey: `admin-seed-${suffix}`,
     }),
   });
-  assert.ok([200, 201].includes(response.status), `seed failed: ${response.status}`);
+  assert.ok(
+    [200, 201].includes(response.status),
+    `seed failed: ${response.status}`,
+  );
   return (await response.json()).id;
 }
 
@@ -132,10 +144,12 @@ async function assertLayoutSane(page, label) {
       );
     };
     const boxes = (selector) =>
-      [...document.querySelectorAll(selector)].filter(visible).map((element) => ({
-        element,
-        rect: element.getBoundingClientRect(),
-      }));
+      [...document.querySelectorAll(selector)]
+        .filter(visible)
+        .map((element) => ({
+          element,
+          rect: element.getBoundingClientRect(),
+        }));
 
     // Interactive controls must stay inside the viewport horizontally.
     for (const { element, rect } of boxes(
@@ -149,17 +163,25 @@ async function assertLayoutSane(page, label) {
     }
 
     // Sibling action buttons inside a card must never overlap each other.
-    const groups = boxes(".product-tile-actions, .row-actions, .card-actions, .event-actions, .page-actions");
+    const groups = boxes(
+      ".product-tile-actions, .row-actions, .card-actions, .event-actions, .page-actions",
+    );
     for (const group of groups) {
-      const items = [...group.element.querySelectorAll(".btn, .icon-btn, a.btn")].filter(visible);
+      const items = [
+        ...group.element.querySelectorAll(".btn, .icon-btn, a.btn"),
+      ].filter(visible);
       for (let i = 0; i < items.length; i += 1) {
         for (let j = i + 1; j < items.length; j += 1) {
           const a = items[i].getBoundingClientRect();
           const b = items[j].getBoundingClientRect();
-          const overlapX = Math.min(a.right, b.right) - Math.max(a.left, b.left);
-          const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+          const overlapX =
+            Math.min(a.right, b.right) - Math.max(a.left, b.left);
+          const overlapY =
+            Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
           if (overlapX > 2 && overlapY > 2) {
-            found.push(`buttons overlap: "${items[i].textContent?.trim()}" × "${items[j].textContent?.trim()}"`);
+            found.push(
+              `buttons overlap: "${items[i].textContent?.trim()}" × "${items[j].textContent?.trim()}"`,
+            );
           }
         }
       }
@@ -172,8 +194,13 @@ async function assertLayoutSane(page, label) {
       window.scrollTo(0, 0);
       const bar = topbar.getBoundingClientRect();
       const title = heading.getBoundingClientRect();
-      if (getComputedStyle(topbar).position === "sticky" && title.top < bar.bottom - 12) {
-        found.push(`the top bar covers the panel heading by ${Math.round(bar.bottom - title.top)}px`);
+      if (
+        getComputedStyle(topbar).position === "sticky" &&
+        title.top < bar.bottom - 12
+      ) {
+        found.push(
+          `the top bar covers the panel heading by ${Math.round(bar.bottom - title.top)}px`,
+        );
       }
     }
 
@@ -199,19 +226,32 @@ test("first run: one-time token, permanent credentials, security answer, success
   const { page, errors } = await openAdmin();
 
   // --- first run shows the setup form, not the login form ---
-  await page.getByRole("heading", { name: "الإعداد الأول" }).waitFor({ timeout: 20000 });
+  await page
+    .getByRole("heading", { name: "الإعداد الأول" })
+    .waitFor({ timeout: 20000 });
   await shot(page, "admin-01-setup");
 
   await page.getByLabel(/رمز الإعداد/).fill("0".repeat(64));
   await page.getByLabel(/كلمة مرور المالك/).fill("a-very-long-password");
   await page.getByRole("button", { name: "إنشاء الحساب" }).click();
-  await page.getByText("رمز الإعداد غير صحيح. راجعه من ملف الإعداد على السيرفر.").waitFor();
-  assert.ok(existsSync(join(dataDir, "setup-token")), "a failed setup keeps the token");
+  await page
+    .getByText("رمز الإعداد غير صحيح. راجعه من ملف الإعداد على السيرفر.")
+    .waitFor();
+  assert.ok(
+    existsSync(join(dataDir, "setup-token")),
+    "a failed setup keeps the token",
+  );
 
   await page.getByLabel(/رمز الإعداد/).fill(SETUP_TOKEN());
   await page.getByRole("button", { name: "إنشاء الحساب" }).click();
-  await page.getByRole("heading", { name: "بيانات حسابك" }).waitFor({ timeout: 20000 });
-  assert.equal(existsSync(join(dataDir, "setup-token")), false, "the token is deleted after setup");
+  await page
+    .getByRole("heading", { name: "بيانات حسابك" })
+    .waitFor({ timeout: 20000 });
+  assert.equal(
+    existsSync(join(dataDir, "setup-token")),
+    false,
+    "the token is deleted after setup",
+  );
   await shot(page, "admin-02-complete");
 
   // --- the Owner picks their permanent email, password and security question ---
@@ -223,35 +263,55 @@ test("first run: one-time token, permanent credentials, security answer, success
   await page.getByRole("button", { name: "حفظ ومتابعة" }).click();
 
   // Saving logs the current session out and returns to the login screen.
-  await page.getByRole("heading", { name: "تسجيل الدخول" }).waitFor({ timeout: 20000 });
+  await page
+    .getByRole("heading", { name: "تسجيل الدخول" })
+    .waitFor({ timeout: 20000 });
   await shot(page, "admin-03-login");
 
   // --- wrong password is refused ---
   await page.getByLabel(/البريد الإلكتروني أو اسم المستخدم/).fill(OWNER.email);
-  await page.getByLabel("كلمة المرور", { exact: true }).fill("not-the-password");
+  await page
+    .getByLabel("كلمة المرور", { exact: true })
+    .fill("not-the-password");
   await page.getByRole("button", { name: "دخول لوحة التحكم" }).click();
-  await page.getByText("البريد الإلكتروني أو كلمة المرور غير صحيحة.").waitFor({ timeout: 15000 });
+  await page
+    .getByText("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
+    .waitFor({ timeout: 15000 });
 
   // --- correct password → the security question is the second factor ---
   await page.getByLabel("كلمة المرور", { exact: true }).fill(OWNER.password);
   await page.getByRole("button", { name: "دخول لوحة التحكم" }).click();
-  await page.getByRole("heading", { name: "سؤال الأمان" }).waitFor({ timeout: 15000 });
-  assert.match(await page.locator(".auth-question").innerText(), /اسم أول حيوان أليف؟/);
+  await page
+    .getByRole("heading", { name: "سؤال الأمان" })
+    .waitFor({ timeout: 15000 });
+  assert.match(
+    await page.locator(".auth-question").innerText(),
+    /اسم أول حيوان أليف؟/,
+  );
   // The answer itself is never rendered anywhere.
-  assert.equal((await page.locator("body").innerText()).includes(OWNER.answer), false);
+  assert.equal(
+    (await page.locator("body").innerText()).includes(OWNER.answer),
+    false,
+  );
   await shot(page, "admin-04-security");
 
   await page.getByLabel("الإجابة", { exact: true }).fill("إجابة خاطئة");
   await page.getByRole("button", { name: "تأكيد الدخول" }).click();
-  await page.getByText("الإجابة غير صحيحة. حاول مرة أخرى.").waitFor({ timeout: 15000 });
+  await page
+    .getByText("الإجابة غير صحيحة. حاول مرة أخرى.")
+    .waitFor({ timeout: 15000 });
 
   await page.getByLabel("الإجابة", { exact: true }).fill(OWNER.answer);
   await page.getByRole("button", { name: "تأكيد الدخول" }).click();
 
   // --- the success animation plays before the dashboard renders ---
-  await page.getByRole("heading", { name: "تم تسجيل الدخول بنجاح" }).waitFor({ timeout: 15000 });
+  await page
+    .getByRole("heading", { name: "تم تسجيل الدخول بنجاح" })
+    .waitFor({ timeout: 15000 });
   await shot(page, "admin-05-success");
-  await page.getByRole("heading", { name: /أهلًا بك/ }).waitFor({ timeout: 20000 });
+  await page
+    .getByRole("heading", { name: /أهلًا بك/ })
+    .waitFor({ timeout: 20000 });
 
   // --- welcome area: display name, Gregorian + Hijri dates, Cairo clock ---
   const welcome = page.locator(".welcome-card");
@@ -261,7 +321,11 @@ test("first run: one-time token, permanent credentials, security answer, success
   assert.match(welcomeText, /بتوقيت القاهرة/);
   const clockBefore = await page.locator(".welcome-clock").innerText();
   await page.waitForTimeout(1500);
-  assert.notEqual(await page.locator(".welcome-clock").innerText(), clockBefore, "the clock ticks");
+  assert.notEqual(
+    await page.locator(".welcome-clock").innerText(),
+    clockBefore,
+    "the clock ticks",
+  );
   await shot(page, "admin-06-overview");
 
   // --- requests: the seeded row is listed, searchable and updatable ---
@@ -274,7 +338,11 @@ test("first run: one-time token, permanent credentials, security answer, success
   await page.waitForTimeout(600);
   assert.equal(await statusSelect.inputValue(), "confirmed");
   const anonymous = await fetch(`${api}/api/admin/requests?page=1`);
-  assert.equal(anonymous.status, 401, "the API never exposes requests without a session");
+  assert.equal(
+    anonymous.status,
+    401,
+    "the API never exposes requests without a session",
+  );
   await shot(page, "admin-07-requests");
 
   assert.deepEqual(errors, [], "no page errors");
@@ -288,16 +356,22 @@ test("owner: account management is visible, admin accounts can be created and ed
   await signIn(page, OWNER.email, OWNER.password, OWNER.answer);
 
   await goTo(page, "حسابات المشرفين");
-  await page.getByRole("heading", { name: "حسابات المشرفين", exact: true }).waitFor({ timeout: 15000 });
+  await page
+    .getByRole("heading", { name: "حسابات المشرفين", exact: true })
+    .waitFor({ timeout: 15000 });
   await shot(page, "admin-08-admins");
 
   await page.getByRole("button", { name: "حساب مشرف جديد" }).click();
   await page.getByLabel("اسم المستخدم").fill("editor");
   await page.getByLabel("الاسم الظاهر").fill("محرر الموقع");
   await page.getByLabel("البريد الإلكتروني").fill("editor@elpaze.online");
-  await page.getByLabel("كلمة المرور", { exact: true }).fill("editor-long-password-1");
+  await page
+    .getByLabel("كلمة المرور", { exact: true })
+    .fill("kitchen-secret-pass-1");
   await page.getByRole("button", { name: "حفظ" }).click();
-  await page.getByText("تم إنشاء الحساب. يمكنه تسجيل الدخول فورًا.").waitFor({ timeout: 15000 });
+  await page
+    .getByText("تم إنشاء الحساب. يمكنه تسجيل الدخول فورًا.")
+    .waitFor({ timeout: 15000 });
   const editorRow = page.locator("tr", { hasText: "editor" }).first();
   assert.match(await editorRow.innerText(), /مشرف/);
 
@@ -309,7 +383,10 @@ test("owner: account management is visible, admin accounts can be created and ed
 
   // The owner cannot delete their own account (the control is disabled).
   const ownerRow = page.locator("tr", { hasText: "owner" }).first();
-  assert.equal(await ownerRow.getByRole("button", { name: "حذف" }).isDisabled(), true);
+  assert.equal(
+    await ownerRow.getByRole("button", { name: "حذف" }).isDisabled(),
+    true,
+  );
 
   await assertLayoutSane(page, "admins panel (desktop)");
   assert.deepEqual(errors, []);
@@ -340,14 +417,19 @@ test("owner: profile panel closes with X, edits details, and logs out from the b
   await drawer.getByLabel("الاسم الظاهر").fill("محمد نجيب - المالك");
   await drawer.getByRole("button", { name: "حفظ البيانات" }).click();
   await page.getByText("تم حفظ بيانات الحساب.").waitFor({ timeout: 15000 });
-  assert.match(await page.locator(".profile-chip").innerText(), /محمد نجيب - المالك/);
+  assert.match(
+    await page.locator(".profile-chip").innerText(),
+    /محمد نجيب - المالك/,
+  );
 
   // Changing the security question requires the current answer first.
   await drawer.getByLabel("الإجابة الحالية").fill("إجابة غلط");
   await drawer.getByLabel("السؤال").fill("سؤال مختلف؟");
   await drawer.getByLabel("الإجابة الجديدة").fill("إجابة مختلفة");
   await drawer.getByRole("button", { name: "حفظ سؤال الأمان" }).click();
-  await page.getByText("الإجابة الحالية غير صحيحة.").waitFor({ timeout: 15000 });
+  await page
+    .getByText("الإجابة الحالية غير صحيحة.")
+    .waitFor({ timeout: 15000 });
   await drawer.getByLabel("الإجابة الحالية").fill(OWNER.answer);
   await drawer.getByRole("button", { name: "حفظ سؤال الأمان" }).click();
   await page.getByText("تم تحديث سؤال الأمان.").waitFor({ timeout: 15000 });
@@ -369,7 +451,9 @@ test("owner: profile panel closes with X, edits details, and logs out from the b
   // Log out from the bottom of the panel.
   await openProfile(page);
   await drawer.getByRole("button", { name: "تسجيل الخروج" }).click();
-  await page.getByRole("heading", { name: "تسجيل الدخول" }).waitFor({ timeout: 15000 });
+  await page
+    .getByRole("heading", { name: "تسجيل الدخول" })
+    .waitFor({ timeout: 15000 });
 
   assert.deepEqual(errors, []);
   await page.close();
@@ -384,11 +468,17 @@ test("owner: product CRUD with image upload, availability states and live badges
   // A public visitor sees the site in another tab, without reloading it.
   const { page: visitor } = await openSite();
   await siteGo(visitor, 1);
-  await visitor.getByRole("heading", { name: "منتجاتنا" }).waitFor({ timeout: 20000 });
+  await visitor
+    .getByRole("heading", { name: "منتجاتنا" })
+    .waitFor({ timeout: 20000 });
 
   await goTo(page, "المنتجات");
-  await page.getByRole("heading", { name: "المنتجات", exact: true }).waitFor({ timeout: 15000 });
-  await page.getByRole("heading", { name: "جبن موزاريلا مبشور" }).waitFor({ timeout: 15000 });
+  await page
+    .getByRole("heading", { name: "المنتجات", exact: true })
+    .waitFor({ timeout: 15000 });
+  await page
+    .getByRole("heading", { name: "جبن موزاريلا مبشور" })
+    .waitFor({ timeout: 15000 });
   await shot(page, "admin-10-products");
 
   // --- create a product and upload its picture from the device ---
@@ -409,7 +499,9 @@ test("owner: product CRUD with image upload, availability states and live badges
     buffer: png,
   });
   await page.getByRole("button", { name: "إضافة ونشر" }).click();
-  await page.getByText("تمت إضافة المنتج ونشره فورًا.").waitFor({ timeout: 20000 });
+  await page
+    .getByText("تمت إضافة المنتج ونشره فورًا.")
+    .waitFor({ timeout: 20000 });
   await page.getByRole("heading", { name }).waitFor({ timeout: 15000 });
 
   // The upload is stored and used by the site and the dashboard alike.
@@ -427,8 +519,15 @@ test("owner: product CRUD with image upload, availability states and live badges
   // --- NEW badge + availability, both pushed live ---
   const card = page.locator(".product-tile", { hasText: name });
   await card.getByRole("button", { name: "تعليم كجديد" }).click();
-  await page.getByText("تم التحديث على الموقع.").first().waitFor({ timeout: 15000 });
-  await visitor.locator(".product-card", { hasText: name }).getByText("جديد").first().waitFor({ timeout: 15000 });
+  await page
+    .getByText("تم التحديث على الموقع.")
+    .first()
+    .waitFor({ timeout: 15000 });
+  await visitor
+    .locator(".product-card", { hasText: name })
+    .getByText("جديد")
+    .first()
+    .waitFor({ timeout: 15000 });
 
   await card.getByRole("button", { name: "تعديل" }).click();
   await page.getByRole("radio", { name: /يُصنع حسب الطلب/ }).click();
@@ -440,30 +539,53 @@ test("owner: product CRUD with image upload, availability states and live badges
     .getByText("يُصنع حسب الطلب")
     .first()
     .waitFor({ timeout: 15000 });
-  await visitor.locator(".product-card", { hasText: name }).getByText("خصم 20%").first().waitFor({ timeout: 15000 });
+  await visitor
+    .locator(".product-card", { hasText: name })
+    .getByText("خصم 20%")
+    .first()
+    .waitFor({ timeout: 15000 });
 
   // Coming soon replaces the order button on the public card.
   await card.getByRole("button", { name: "قريبًا" }).click();
-  await page.getByText("تم التحديث على الموقع.").first().waitFor({ timeout: 15000 });
-  await visitor.locator(".product-card", { hasText: name }).getByText("قريبًا").first().waitFor({ timeout: 15000 });
-  await visitor.locator(".product-card", { hasText: name }).getByText("قريبًا بإذن الله").waitFor({ timeout: 15000 });
+  await page
+    .getByText("تم التحديث على الموقع.")
+    .first()
+    .waitFor({ timeout: 15000 });
+  await visitor
+    .locator(".product-card", { hasText: name })
+    .getByText("قريبًا")
+    .first()
+    .waitFor({ timeout: 15000 });
+  await visitor
+    .locator(".product-card", { hasText: name })
+    .getByText("قريبًا بإذن الله")
+    .waitFor({ timeout: 15000 });
   await shot(visitor, "admin-11-site-badges");
 
   // Quantity zero marks the product as out of stock.
   await card.getByRole("button", { name: "إتاحة" }).click();
-  await page.getByText("تم التحديث على الموقع.").first().waitFor({ timeout: 15000 });
+  await page
+    .getByText("تم التحديث على الموقع.")
+    .first()
+    .waitFor({ timeout: 15000 });
   await card.getByRole("button", { name: "تعديل" }).click();
   await page.getByLabel("الكمية المتاحة").fill("0");
   await page.getByRole("button", { name: "حفظ ونشر" }).click();
   await page.getByText("تم حفظ التعديلات ونشرها.").waitFor({ timeout: 20000 });
-  await visitor.locator(".product-card", { hasText: name }).getByText("نفدت الكمية").first().waitFor({ timeout: 15000 });
+  await visitor
+    .locator(".product-card", { hasText: name })
+    .getByText("نفدت الكمية")
+    .first()
+    .waitFor({ timeout: 15000 });
 
   // --- delete ---
   await card.getByRole("button", { name: "حذف" }).click();
   await page.getByRole("button", { name: "حذف نهائي" }).click();
   await page.getByText("تم حذف المنتج من الموقع.").waitFor({ timeout: 20000 });
   await assert.rejects(
-    visitor.locator(".product-card", { hasText: name }).waitFor({ timeout: 6000 }),
+    visitor
+      .locator(".product-card", { hasText: name })
+      .waitFor({ timeout: 6000 }),
     "the deleted product must disappear from the live site",
   );
 
@@ -479,18 +601,28 @@ test("owner: events publish to the public announcement bar and can be hidden", a
 
   const { page: visitor } = await openSite();
   await siteGo(visitor, 1);
-  await visitor.getByRole("heading", { name: "منتجاتنا" }).waitFor({ timeout: 20000 });
-  assert.equal(await visitor.locator(".announce-bar").count(), 0, "no announcements before the first event");
+  await visitor
+    .getByRole("heading", { name: "منتجاتنا" })
+    .waitFor({ timeout: 20000 });
+  assert.equal(
+    await visitor.locator(".announce-bar").count(),
+    0,
+    "no announcements before the first event",
+  );
 
   await goTo(page, "المناسبات");
-  await page.getByRole("heading", { name: "المناسبات والتنبيهات", exact: true }).waitFor({ timeout: 15000 });
+  await page
+    .getByRole("heading", { name: "المناسبات والتنبيهات", exact: true })
+    .waitFor({ timeout: 15000 });
   await shot(page, "admin-12-events");
   await page.getByRole("button", { name: "مناسبة جديدة" }).click();
   await page.getByLabel("العنوان").fill("عرض الموسم");
   await page.getByLabel("الوصف").fill("خصم ١٥٪ على كل الأجبان حتى نهاية الشهر");
   await page.getByLabel("النوع").selectOption("discount");
   await page.getByRole("button", { name: "حفظ ونشر" }).click();
-  await page.getByText("تم حفظ المناسبة ونشرها على الموقع فورًا.").waitFor({ timeout: 20000 });
+  await page
+    .getByText("تم حفظ المناسبة ونشرها على الموقع فورًا.")
+    .waitFor({ timeout: 20000 });
 
   // The announcement bar appears for the visitor without a reload.
   const bar = visitor.locator(".announce-bar");
@@ -498,30 +630,53 @@ test("owner: events publish to the public announcement bar and can be hidden", a
   assert.match(await bar.innerText(), /عرض الموسم/);
   await shot(visitor, "admin-13-site-announcement");
   const collide = await visitor.evaluate(() => {
-    const bar = document.querySelector(".announce-bar")?.getBoundingClientRect();
-    const toggle = document.querySelector(".theme-toggle")?.getBoundingClientRect();
+    const bar = document
+      .querySelector(".announce-bar")
+      ?.getBoundingClientRect();
+    const toggle = document
+      .querySelector(".theme-toggle")
+      ?.getBoundingClientRect();
     if (!bar || !toggle) return "missing";
-    const overlapX = Math.min(bar.right, toggle.right) - Math.max(bar.left, toggle.left);
-    const overlapY = Math.min(bar.bottom, toggle.bottom) - Math.max(bar.top, toggle.top);
-    return overlapX > 2 && overlapY > 2 ? `overlap ${Math.round(overlapX)}x${Math.round(overlapY)}` : "";
+    const overlapX =
+      Math.min(bar.right, toggle.right) - Math.max(bar.left, toggle.left);
+    const overlapY =
+      Math.min(bar.bottom, toggle.bottom) - Math.max(bar.top, toggle.top);
+    return overlapX > 2 && overlapY > 2
+      ? `overlap ${Math.round(overlapX)}x${Math.round(overlapY)}`
+      : "";
   });
-  assert.equal(collide, "", "the announcement bar must not sit on the theme toggle");
+  assert.equal(
+    collide,
+    "",
+    "the announcement bar must not sit on the theme toggle",
+  );
   await visitor.getByRole("button", { name: "إغلاق التنبيه" }).click();
   await bar.waitFor({ state: "detached", timeout: 10000 });
 
   // Hiding it in the dashboard removes it from the public payload.
   await page.getByRole("button", { name: "إخفاء" }).first().click();
-  await page.getByText("تم إخفاء المناسبة من الموقع.").waitFor({ timeout: 15000 });
+  await page
+    .getByText("تم إخفاء المناسبة من الموقع.")
+    .waitFor({ timeout: 15000 });
   const published = await (await fetch(`${api}/api/content`)).json();
-  assert.equal(published.events.length, 0, "hidden events stay out of the public payload");
+  assert.equal(
+    published.events.length,
+    0,
+    "hidden events stay out of the public payload",
+  );
 
   // Show it again, then delete it.
   await page.getByRole("button", { name: "إظهار" }).first().click();
-  await page.getByText("المناسبة ظاهرة الآن على الموقع.").waitFor({ timeout: 15000 });
+  await page
+    .getByText("المناسبة ظاهرة الآن على الموقع.")
+    .waitFor({ timeout: 15000 });
   await page.getByRole("button", { name: "حذف" }).first().click();
   await page.getByRole("button", { name: "حذف", exact: true }).last().click();
   await page.getByText("تم حذف المناسبة.").waitFor({ timeout: 15000 });
-  assert.equal((await (await fetch(`${api}/api/content`)).json()).events.length, 0);
+  assert.equal(
+    (await (await fetch(`${api}/api/content`)).json()).events.length,
+    0,
+  );
 
   await assertLayoutSane(page, "events panel (desktop)");
   assert.deepEqual(errors, []);
@@ -534,34 +689,60 @@ test("owner: events publish to the public announcement bar and can be hidden", a
 test("admin: no owner-only UI, normal dashboard work still possible, API refuses escalation", async () => {
   // The editor has no security question yet, so this is the plain login path.
   const { page: adminPage, errors: adminErrors } = await openAdmin();
-  await adminPage.getByLabel(/البريد الإلكتروني أو اسم المستخدم/).fill("editor@elpaze.online");
-  await adminPage.getByLabel("كلمة المرور", { exact: true }).fill("editor-long-password-1");
+  await adminPage
+    .getByLabel(/البريد الإلكتروني أو اسم المستخدم/)
+    .fill("editor@elpaze.online");
+  await adminPage
+    .getByLabel("كلمة المرور", { exact: true })
+    .fill("kitchen-secret-pass-1");
   await adminPage.getByRole("button", { name: "دخول لوحة التحكم" }).click();
-  await adminPage.getByRole("heading", { name: "تم تسجيل الدخول بنجاح" }).waitFor({ timeout: 15000 });
-  await adminPage.getByRole("heading", { name: /أهلًا بك/ }).waitFor({ timeout: 20000 });
+  await adminPage
+    .getByRole("heading", { name: "تم تسجيل الدخول بنجاح" })
+    .waitFor({ timeout: 15000 });
+  await adminPage
+    .getByRole("heading", { name: /أهلًا بك/ })
+    .waitFor({ timeout: 20000 });
 
   // Owner-only navigation must not exist in the interface at all.
   const html = await adminPage.locator("body").innerText();
-  assert.equal(html.includes("حسابات المشرفين"), false, "the accounts panel is invisible to admins");
+  assert.equal(
+    html.includes("حسابات المشرفين"),
+    false,
+    "the accounts panel is invisible to admins",
+  );
   await adminPage.getByRole("heading", { name: /أهلًا بك/ }).waitFor();
   assert.match(await adminPage.locator(".welcome-side").innerText(), /مشرف/);
 
   // Normal work is available: products, content, requests.
   await goTo(adminPage, "المنتجات");
-  await adminPage.getByRole("heading", { name: "جبن موزاريلا مبشور" }).waitFor({ timeout: 15000 });
+  await adminPage
+    .getByRole("heading", { name: "جبن موزاريلا مبشور" })
+    .waitFor({ timeout: 15000 });
   await goTo(adminPage, "محتوى الموقع");
   await adminPage.getByTestId("site-name").waitFor({ timeout: 15000 });
 
   // Direct API calls to owner endpoints are refused, not just hidden.
   const session = await adminPage.evaluate(async () => {
-    const response = await fetch("/api/admin/session", { credentials: "same-origin" });
+    const response = await fetch("/api/admin/session", {
+      credentials: "same-origin",
+    });
     return response.json();
   });
   assert.equal(session.capabilities.manageAdmins, false);
   assert.equal(session.role, "admin");
   for (const [method, path, body] of [
     ["GET", "/api/admin/admins", null],
-    ["POST", "/api/admin/admins", { username: "x", displayName: "x", email: "x@y.com", password: "another-long-password", role: "owner" }],
+    [
+      "POST",
+      "/api/admin/admins",
+      {
+        username: "x",
+        displayName: "x",
+        email: "x@y.com",
+        password: "another-long-password",
+        role: "owner",
+      },
+    ],
     ["DELETE", "/api/admin/admins/1", {}],
   ]) {
     const status = await adminPage.evaluate(
@@ -572,7 +753,10 @@ test("admin: no owner-only UI, normal dashboard work still possible, API refuses
           headers:
             method === "GET"
               ? undefined
-              : { "content-type": "application/json", "x-csrf-token": (window.__csrf ??= "") },
+              : {
+                  "content-type": "application/json",
+                  "x-csrf-token": (window.__csrf ??= ""),
+                },
           body: method === "GET" ? undefined : JSON.stringify(body),
         });
         return response.status;
@@ -594,12 +778,20 @@ test("dashboard: dark/light toggle persists, and every breakpoint stays usable",
   await signIn(page, OWNER.email, OWNER.password, OWNER.answer);
 
   // --- theme ---
-  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "light");
+  assert.equal(
+    await page.evaluate(() => document.documentElement.dataset.theme),
+    "light",
+  );
   await page.getByRole("button", { name: /الوضع الداكن/ }).click();
   await page.waitForTimeout(700);
-  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "dark");
+  assert.equal(
+    await page.evaluate(() => document.documentElement.dataset.theme),
+    "dark",
+  );
   await page.reload();
-  await page.getByRole("heading", { name: /أهلًا بك/ }).waitFor({ timeout: 25000 });
+  await page
+    .getByRole("heading", { name: /أهلًا بك/ })
+    .waitFor({ timeout: 25000 });
   assert.equal(
     await page.evaluate(() => document.documentElement.dataset.theme),
     "dark",
@@ -609,15 +801,27 @@ test("dashboard: dark/light toggle persists, and every breakpoint stays usable",
   await assertLayoutSane(page, "overview (dark, desktop)");
 
   await goTo(page, "المنتجات");
-  await page.getByRole("heading", { name: "جبن موزاريلا مبشور" }).waitFor({ timeout: 15000 });
+  await page
+    .getByRole("heading", { name: "جبن موزاريلا مبشور" })
+    .waitFor({ timeout: 15000 });
   await shot(page, "admin-15-dark-products");
   await assertLayoutSane(page, "products (dark, desktop)");
 
   // --- responsive sweep ---
   const views = [
     { label: "tablet", viewport: { width: 834, height: 1112 } },
-    { label: "mobile", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
-    { label: "landscape phone", viewport: { width: 740, height: 360 }, isMobile: true, hasTouch: true },
+    {
+      label: "mobile",
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+    },
+    {
+      label: "landscape phone",
+      viewport: { width: 740, height: 360 },
+      isMobile: true,
+      hasTouch: true,
+    },
   ];
   for (const view of views) {
     const { page: small, errors: smallErrors } = await openAdmin(view);
@@ -631,12 +835,16 @@ test("dashboard: dark/light toggle persists, and every breakpoint stays usable",
       await small.locator(".sidebar--open").waitFor({ timeout: 10000 });
     }
     await goTo(small, "المنتجات");
-    await small.getByRole("heading", { name: "المنتجات", exact: true }).waitFor({ timeout: 15000 });
+    await small
+      .getByRole("heading", { name: "المنتجات", exact: true })
+      .waitFor({ timeout: 15000 });
     await assertLayoutSane(small, `products (${view.label})`);
 
     // A modal must fit the smallest screens too.
     await small.getByRole("button", { name: "منتج جديد" }).click();
-    await small.getByRole("heading", { name: "منتج جديد" }).waitFor({ timeout: 15000 });
+    await small
+      .getByRole("heading", { name: "منتج جديد" })
+      .waitFor({ timeout: 15000 });
     await assertLayoutSane(small, `product modal (${view.label})`);
     await shot(small, `admin-16-${view.label.replace(/\s+/g, "-")}`);
     await small.keyboard.press("Escape");
