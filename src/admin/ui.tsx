@@ -52,7 +52,9 @@ export function Card({
           {actions && <div className="card-actions">{actions}</div>}
         </header>
       )}
-      <div className={padded ? "card-body" : "card-body card-body--flush"}>{children}</div>
+      <div className={padded ? "card-body" : "card-body card-body--flush"}>
+        {children}
+      </div>
     </section>
   );
 }
@@ -86,7 +88,9 @@ export function Grid({
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={`ui-grid ui-grid--${columns} ${className}`}>{children}</div>;
+  return (
+    <div className={`ui-grid ui-grid--${columns} ${className}`}>{children}</div>
+  );
 }
 
 /* ----------------------------------------------------------------- buttons */
@@ -132,7 +136,11 @@ export function Button({
       aria-label={ariaLabel}
       aria-busy={loading || undefined}
     >
-      {loading ? <Icons.loader size={size === "sm" ? 15 : 17} className="spin" /> : icon}
+      {loading ? (
+        <Icons.loader size={size === "sm" ? 15 : 17} className="spin" />
+      ) : (
+        icon
+      )}
       {children && <span>{children}</span>}
       {trailingIcon}
     </button>
@@ -199,7 +207,9 @@ export function Field({
     ? (only as ReactElement<{ id?: string; required?: boolean }>)
     : null;
   // Composite controls (option groups, custom widgets) get a plain caption.
-  const control = single ? cloneElement(single, { id, required: required || undefined }) : children;
+  const control = single
+    ? cloneElement(single, { id, required: required || undefined })
+    : children;
   // The asterisk is decorative: `required` is announced by the control itself.
   // The required marker sits outside the <label> so the label text (and with it
   // the control's accessible name) stays exactly the human label.
@@ -413,7 +423,9 @@ export function OptionGroup<T extends string>({
             <strong>{option.label}</strong>
             {option.hint && <small>{option.hint}</small>}
           </span>
-          {value === option.value && <Icons.check size={16} className="option-check" />}
+          {value === option.value && (
+            <Icons.check size={16} className="option-check" />
+          )}
         </button>
       ))}
     </div>
@@ -439,9 +451,17 @@ export function Badge({
   );
 }
 
-export function StatusDot({ online, label }: { online: boolean; label: string }) {
+export function StatusDot({
+  online,
+  label,
+}: {
+  online: boolean;
+  label: string;
+}) {
   return (
-    <span className={`status-dot${online ? " status-dot--online" : " status-dot--offline"}`}>
+    <span
+      className={`status-dot${online ? " status-dot--online" : " status-dot--offline"}`}
+    >
       {online ? <Icons.online size={14} /> : <Icons.offline size={14} />}
       {label}
     </span>
@@ -551,7 +571,9 @@ export function Modal({
     window.addEventListener("keydown", onKey);
     // Focus the first control so keyboard users land inside the dialog.
     requestAnimationFrame(() => {
-      panel.current?.querySelector<HTMLElement>("input, select, textarea, button")?.focus();
+      panel.current
+        ?.querySelector<HTMLElement>("input, select, textarea, button")
+        ?.focus();
     });
     return () => {
       window.removeEventListener("keydown", onKey);
@@ -580,7 +602,11 @@ export function Modal({
             <h2 id={titleId}>{title}</h2>
             {description && <p>{description}</p>}
           </div>
-          <IconButton label="إغلاق" icon={<Icons.close size={18} />} onClick={onClose} />
+          <IconButton
+            label="إغلاق"
+            icon={<Icons.close size={18} />}
+            onClick={onClose}
+          />
         </header>
         <div className="ui-modal-body">{children}</div>
         {footer && <footer className="ui-modal-foot">{footer}</footer>}
@@ -624,7 +650,9 @@ export function ConfirmDialog({
             variant={danger ? "danger" : "primary"}
             onClick={onConfirm}
             loading={busy}
-            icon={danger ? <Icons.trash size={16} /> : <Icons.check size={16} />}
+            icon={
+              danger ? <Icons.trash size={16} /> : <Icons.check size={16} />
+            }
           >
             {confirmLabel}
           </Button>
@@ -687,13 +715,27 @@ const ERROR_MESSAGES: Record<string, string> = {
   "last-owner": "لا يمكن إزالة صلاحية آخر حساب مالك.",
   "cannot-delete-self": "لا يمكنك حذف حسابك الحالي.",
   "profile-incomplete": "أكمل بيانات حسابك أولًا.",
-  "unsupported-type": "صيغة الملف غير مدعومة. المسموح: PNG أو JPG أو JPEG أو GIF أو WebP.",
+  "unsupported-type":
+    "صيغة الملف غير مدعومة. المسموح: PNG أو JPG أو JPEG أو GIF أو WebP.",
   "file-too-large": "حجم الصورة كبير. الحد الأقصى ٥ ميجابايت.",
   "no-file": "لم يتم اختيار ملف.",
   "empty-file": "الملف فارغ.",
   "upload-failed": "تعذّر رفع الصورة. حاول مرة أخرى.",
-  "revision-conflict": "عُدّل المحتوى من مكان آخر — حدّث الصفحة وحاول مرة أخرى.",
+  "revision-conflict":
+    "عُدّل المحتوى من مكان آخر — حدّث الصفحة وحاول مرة أخرى.",
   "too-many-requests": "محاولات كثيرة. انتظر قليلًا ثم أعد المحاولة.",
+  "too-many-attempts":
+    "محاولات دخول خاطئة كثيرة على هذا الحساب. انتظر قليلًا ثم أعد المحاولة.",
+  "password-too-common":
+    "كلمة المرور شائعة جدًا وسهلة التخمين. اختر كلمة مرور أقوى.",
+  "password-too-simple": "كلمة المرور بسيطة جدًا. اختر كلمة مرور أقوى.",
+  "password-matches-account":
+    "كلمة المرور لا يجب أن تحتوي على اسم المستخدم أو البريد الإلكتروني.",
+  "password-too-short": "كلمة المرور يجب ألا تقل عن ١٢ حرفًا.",
+  "request-key-conflict": "تم إرسال طلب مختلف بنفس المفتاح. أعد المحاولة.",
+  "image-host-not-allowed": "رابط الصورة من نطاق غير مسموح به في هذا الإعداد.",
+  "payload-too-large": "البيانات المرسلة كبيرة جدًا.",
+  "invalid-json": "تعذّر قراءة البيانات المرسلة.",
   "invalid-product": "راجع بيانات المنتج.",
   "invalid-event": "راجع بيانات المناسبة.",
   "owner-only": "ليست لديك صلاحية لهذا الإجراء.",
@@ -722,13 +764,16 @@ export function describeError(error: unknown): string {
         return "تعذّر تنفيذ العملية. حاول مرة أخرى.";
     }
   }
-  if (error instanceof TypeError) return "تعذّر الاتصال بالسيرفر. تحقق من الشبكة.";
+  if (error instanceof TypeError)
+    return "تعذّر الاتصال بالسيرفر. تحقق من الشبكة.";
   return "حدث خطأ غير متوقع.";
 }
 
 export const fieldErrorsOf = (error: unknown): Record<string, string> => {
   if (error instanceof ApiFailure && error.status === 422) {
-    const details = (error.payload as { details?: Record<string, string[]> } | null)?.details;
+    const details = (
+      error.payload as { details?: Record<string, string[]> } | null
+    )?.details;
     if (details) {
       const flat: Record<string, string> = {};
       for (const [key, messages] of Object.entries(details)) {
@@ -791,7 +836,8 @@ export function ImageField({
     try {
       const result: { upload: StoredUpload } = await adminApi.upload(file);
       onChange(result.upload.url);
-      if (onWebpChange && result.upload.mime === "image/webp") onWebpChange(result.upload.url);
+      if (onWebpChange && result.upload.mime === "image/webp")
+        onWebpChange(result.upload.url);
     } catch (failure) {
       setError(describeError(failure));
     } finally {
@@ -846,13 +892,20 @@ export function ImageField({
               رفع صورة من الجهاز
             </Button>
             {value && (
-              <Button variant="ghost" size="sm" icon={<Icons.trash size={15} />} onClick={() => onChange("")}>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Icons.trash size={15} />}
+                onClick={() => onChange("")}
+              >
                 إزالة
               </Button>
             )}
             {labelExtra}
           </div>
-          <p className="field-hint">الصيغ المدعومة: PNG، JPG، JPEG، GIF، WebP — بحد أقصى ٥ ميجابايت.</p>
+          <p className="field-hint">
+            الصيغ المدعومة: PNG، JPG، JPEG، GIF، WebP — بحد أقصى ٥ ميجابايت.
+          </p>
         </div>
       </div>
     </div>

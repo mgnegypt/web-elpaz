@@ -1,7 +1,13 @@
 // Dashboard shell: bootstrap → auth → application chrome (sidebar + header).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentDoc } from "../../shared/content.ts";
-import { ApiFailure, adminApi, setCsrfToken, subscribeLive, type AdminSession } from "./api";
+import {
+  ApiFailure,
+  adminApi,
+  setCsrfToken,
+  subscribeLive,
+  type AdminSession,
+} from "./api";
 import { Icons } from "./icons";
 import { Skeleton } from "./ui";
 import { ToastProvider, useToast } from "./ui";
@@ -12,11 +18,15 @@ import ContentPanel from "./ContentPanel";
 import EventsPanel from "./EventsPanel";
 import RequestsPanel from "./RequestsPanel";
 import AdminsPanel from "./AdminsPanel";
+import AuditPanel from "./AuditPanel";
 import ProfilePanel from "./ProfilePanel";
 import ThemeToggle from "../components/ThemeToggle";
 
 type Stage = "boot" | "auth" | "app";
-type AuthStart = { phase: "setup" | "login" | "complete" | "security"; question?: string };
+type AuthStart = {
+  phase: "setup" | "login" | "complete" | "security";
+  question?: string;
+};
 
 const NAV = [
   { key: "overview", label: "نظرة عامة", icon: "dashboard" },
@@ -26,7 +36,10 @@ const NAV = [
   { key: "requests", label: "طلبات الجملة", icon: "truck" },
 ] as const;
 
-const OWNER_NAV = [{ key: "admins", label: "حسابات المشرفين", icon: "users" }] as const;
+const OWNER_NAV = [
+  { key: "admins", label: "حسابات المشرفين", icon: "users" },
+  { key: "audit", label: "سجل النشاط", icon: "activity" },
+] as const;
 
 function Dashboard() {
   const toast = useToast();
@@ -63,7 +76,9 @@ function Dashboard() {
       try {
         return await adminApi.status();
       } catch {
-        await new Promise((resolve) => window.setTimeout(resolve, 600 * (attempt + 1)));
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, 600 * (attempt + 1)),
+        );
       }
     }
     return null;
@@ -91,7 +106,8 @@ function Dashboard() {
         if (!live) return;
         // A 401 is the normal "not signed in yet" answer; anything else may just
         // be the API still waking up, so retry before assuming anything.
-        const unauthorised = failure instanceof ApiFailure && failure.status === 401;
+        const unauthorised =
+          failure instanceof ApiFailure && failure.status === 401;
         const status = await readStatus(unauthorised ? 2 : 5);
         if (!live) return;
         // Resolve the phase first, then mount the auth screen: it must never
@@ -108,23 +124,21 @@ function Dashboard() {
   /* ------------------------------------------------------------ live feed */
   useEffect(() => {
     if (stage !== "app") return;
-    const stop = subscribeLive(
-      (type) => {
-        if (type === "events") return;
-        if (dirtyRef.current) {
-          setStaleRevision((current) => current ?? -1);
-          return;
-        }
-        void adminApi
-          .content()
-          .then((document_) => {
-            setContent(document_);
-            if (type === "content") toast.push("info", "تم تحديث المحتوى من مصدر آخر.");
-          })
-          .catch(() => undefined);
-      },
-      setOnline,
-    );
+    const stop = subscribeLive((type) => {
+      if (type === "events") return;
+      if (dirtyRef.current) {
+        setStaleRevision((current) => current ?? -1);
+        return;
+      }
+      void adminApi
+        .content()
+        .then((document_) => {
+          setContent(document_);
+          if (type === "content")
+            toast.push("info", "تم تحديث المحتوى من مصدر آخر.");
+        })
+        .catch(() => undefined);
+    }, setOnline);
     return stop;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage]);
@@ -156,15 +170,21 @@ function Dashboard() {
   /** A 401 anywhere means the session died: return to the login screen. */
   const guard = useCallback(
     (failure: unknown) => {
-      if (failure instanceof ApiFailure && failure.status === 401) void logout();
+      if (failure instanceof ApiFailure && failure.status === 401)
+        void logout();
       return failure;
     },
     [logout],
   );
 
   const navItems = useMemo(() => {
-    const items = [...NAV] as { key: string; label: string; icon: keyof typeof Icons }[];
-    if (session?.capabilities.manageAdmins) items.push(...(OWNER_NAV as unknown as typeof items));
+    const items = [...NAV] as {
+      key: string;
+      label: string;
+      icon: keyof typeof Icons;
+    }[];
+    if (session?.capabilities.manageAdmins)
+      items.push(...(OWNER_NAV as unknown as typeof items));
     return items;
   }, [session?.capabilities.manageAdmins]);
 
@@ -211,7 +231,8 @@ function Dashboard() {
     );
   }
 
-  const activeLabel = [...NAV, ...OWNER_NAV].find((item) => item.key === tab)?.label ?? "";
+  const activeLabel =
+    [...NAV, ...OWNER_NAV].find((item) => item.key === tab)?.label ?? "";
 
   return (
     <div className="admin-shell">
@@ -246,7 +267,10 @@ function Dashboard() {
             <Icons.user size={19} />
             <span>الملف الشخصي</span>
           </button>
-          <button className="nav-item nav-item--danger" onClick={() => void logout()}>
+          <button
+            className="nav-item nav-item--danger"
+            onClick={() => void logout()}
+          >
             <Icons.logout size={19} />
             <span>تسجيل الخروج</span>
           </button>
@@ -257,7 +281,9 @@ function Dashboard() {
         </div>
       </aside>
 
-      {menuOpen && <div className="sidebar-scrim" onClick={() => setMenuOpen(false)} />}
+      {menuOpen && (
+        <div className="sidebar-scrim" onClick={() => setMenuOpen(false)} />
+      )}
 
       <div className="admin-body">
         <header className="topbar">
@@ -273,7 +299,11 @@ function Dashboard() {
             {/* The panel below renders the page <h1>; this is only a locator hint. */}
             <span className="topbar-label">{activeLabel}</span>
             <span className={`live-chip${online ? " live-chip--on" : ""}`}>
-              {online ? <Icons.online size={13} /> : <Icons.offline size={13} />}
+              {online ? (
+                <Icons.online size={13} />
+              ) : (
+                <Icons.offline size={13} />
+              )}
               {online ? "تحديث فوري" : "غير متصل"}
             </span>
           </div>
@@ -293,7 +323,10 @@ function Dashboard() {
               </button>
             )}
             <ThemeToggle />
-            <button className="profile-chip" onClick={() => setProfileOpen(true)}>
+            <button
+              className="profile-chip"
+              onClick={() => setProfileOpen(true)}
+            >
               {session.avatarUrl ? (
                 <img src={session.avatarUrl} alt="" />
               ) : (
@@ -311,21 +344,39 @@ function Dashboard() {
 
         <main className="admin-main">
           {tab === "overview" && (
-            <OverviewPanel session={session} content={content} online={online} onNavigate={goTo} />
+            <OverviewPanel
+              session={session}
+              content={content}
+              online={online}
+              onNavigate={goTo}
+            />
           )}
           {tab === "products" && (
-            <ProductsPanel content={content} onContent={setContent} categories={content.categories} />
+            <ProductsPanel
+              content={content}
+              onContent={setContent}
+              categories={content.categories}
+            />
           )}
           {tab === "events" && <EventsPanel />}
           {tab === "content" && (
-            <ContentPanel content={content} onContent={setContent} onDirtyChange={setContentDirty} />
+            <ContentPanel
+              content={content}
+              onContent={setContent}
+              onDirtyChange={setContentDirty}
+            />
           )}
           {tab === "requests" && <RequestsPanel />}
-          {tab === "admins" && session.capabilities.manageAdmins && <AdminsPanel selfId={session.id} />}
+          {tab === "admins" && session.capabilities.manageAdmins && (
+            <AdminsPanel selfId={session.id} />
+          )}
           {tab === "admins" && !session.capabilities.manageAdmins && (
             <div className="card">
               <p className="confirm-text">هذه الصفحة متاحة للمالك فقط.</p>
             </div>
+          )}
+          {tab === "audit" && session.capabilities.manageAdmins && (
+            <AuditPanel />
           )}
         </main>
       </div>

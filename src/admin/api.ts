@@ -79,6 +79,24 @@ export type RequestsPage = {
   pages: number;
 };
 
+export type AuditEntry = {
+  id: number;
+  at: string;
+  kind: string;
+  actorId: number | null;
+  actorName: string;
+  ip: string;
+  detail: string;
+  suspicious: boolean;
+};
+
+export type AuditSummary = {
+  total: number;
+  suspicious: number;
+  last24h: number;
+  kinds: { kind: string; count: number }[];
+};
+
 export type StoredUpload = {
   url: string;
   filename: string;
@@ -132,17 +150,40 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const adminApi = {
+  audit: (
+    options: { limit?: number; kind?: string; suspicious?: boolean } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.kind) params.set("kind", options.kind);
+    if (options.suspicious) params.set("suspicious", "1");
+    const query = params.toString();
+    return call<{ items: AuditEntry[]; summary: AuditSummary }>(
+      `/api/admin/admins/audit${query ? `?${query}` : ""}`,
+    );
+  },
   status: () =>
     call<{ needsSetup: boolean; setupAvailable: boolean }>("/api/admin/status"),
   setup: (token: string, username: string, password: string) =>
-    call<{ ok: true; username: string; role: Role; mustCompleteProfile: boolean; csrf: string }>(
-      "/api/admin/setup",
-      { method: "POST", body: JSON.stringify({ token, username, password }) },
-    ),
+    call<{
+      ok: true;
+      username: string;
+      role: Role;
+      mustCompleteProfile: boolean;
+      csrf: string;
+    }>("/api/admin/setup", {
+      method: "POST",
+      body: JSON.stringify({ token, username, password }),
+    }),
   login: (identifier: string, password: string) =>
     call<
-      | { ok: true; requiresSecurityAnswer: true; question: string; pendingCsrf: string }
-      | Omit<AdminSession, "capabilities"> & { requiresSecurityAnswer: false }
+      | {
+          ok: true;
+          requiresSecurityAnswer: true;
+          question: string;
+          pendingCsrf: string;
+        }
+      | (Omit<AdminSession, "capabilities"> & { requiresSecurityAnswer: false })
     >("/api/admin/login", {
       method: "POST",
       body: JSON.stringify({ identifier, password }),
@@ -168,7 +209,11 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(input),
     }),
-  updateProfile: (input: { displayName: string; email: string; avatarUrl: string }) =>
+  updateProfile: (input: {
+    displayName: string;
+    email: string;
+    avatarUrl: string;
+  }) =>
     call<{ ok: true; profile: AdminProfile }>("/api/admin/profile", {
       method: "PUT",
       body: JSON.stringify(input),
@@ -217,7 +262,9 @@ export const adminApi = {
       body: JSON.stringify(input),
     }),
   deleteAdmin: (id: number) =>
-    call<{ ok: true; deleted: number }>(`/api/admin/admins/${id}`, { method: "DELETE" }),
+    call<{ ok: true; deleted: number }>(`/api/admin/admins/${id}`, {
+      method: "DELETE",
+    }),
 
   // ---- uploads -----------------------------------------------------------
   upload: (file: File) => {
@@ -242,7 +289,9 @@ export const adminApi = {
       body: JSON.stringify(input),
     }),
   deleteEvent: (id: number) =>
-    call<{ ok: true; deleted: number }>(`/api/admin/events/${id}`, { method: "DELETE" }),
+    call<{ ok: true; deleted: number }>(`/api/admin/events/${id}`, {
+      method: "DELETE",
+    }),
 
   // ---- requests ----------------------------------------------------------
   requests: (params: { search: string; status: string; page: number }) => {
@@ -259,7 +308,9 @@ export const adminApi = {
       body: JSON.stringify({ status }),
     }),
   deleteRequest: (id: number) =>
-    call<{ ok: true; deleted: number }>(`/api/admin/requests/${id}`, { method: "DELETE" }),
+    call<{ ok: true; deleted: number }>(`/api/admin/requests/${id}`, {
+      method: "DELETE",
+    }),
 
   // ---- content -----------------------------------------------------------
   content: () => call<ContentDoc>("/api/admin/content"),
@@ -273,7 +324,11 @@ export const adminApi = {
       "/api/admin/products",
       { method: "POST", body: JSON.stringify({ product, revision }) },
     ),
-  updateProduct: (id: number, product: Record<string, unknown>, revision: number) =>
+  updateProduct: (
+    id: number,
+    product: Record<string, unknown>,
+    revision: number,
+  ) =>
     call<{ ok: true; revision: number; product: Content["products"][number] }>(
       `/api/admin/products/${id}`,
       { method: "PUT", body: JSON.stringify({ product, revision }) },
@@ -328,7 +383,9 @@ export function subscribeLive(
     });
     source.addEventListener("message", (event) => {
       try {
-        const data = JSON.parse((event as MessageEvent).data) as { type?: string };
+        const data = JSON.parse((event as MessageEvent).data) as {
+          type?: string;
+        };
         if (data.type && data.type !== "hello") onEvent(data.type);
       } catch {
         /* ignore malformed frames */
@@ -341,7 +398,10 @@ export function subscribeLive(
       if (closed) return;
       retry += 1;
       // Exponential backoff, capped at 15s, so a restarted server is picked up quickly.
-      timer = window.setTimeout(connect, Math.min(15_000, 1000 * 2 ** Math.min(retry, 4)));
+      timer = window.setTimeout(
+        connect,
+        Math.min(15_000, 1000 * 2 ** Math.min(retry, 4)),
+      );
     });
   };
 

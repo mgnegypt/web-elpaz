@@ -192,7 +192,8 @@ img {
   background: var(--surface);
   visibility: hidden;
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--hairline) 27%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--hairline) 27%, transparent)
+    transparent;
 }
 .section-shell.is-active {
   visibility: visible;
@@ -213,8 +214,16 @@ img {
 }
 .section-2 {
   background-image:
-    radial-gradient(circle at 10% 15%, color-mix(in srgb, var(--hairline) 6%, transparent), transparent 25%),
-    radial-gradient(circle at 90% 85%, color-mix(in srgb, var(--hairline) 4%, transparent), transparent 25%);
+    radial-gradient(
+      circle at 10% 15%,
+      color-mix(in srgb, var(--hairline) 6%, transparent),
+      transparent 25%
+    ),
+    radial-gradient(
+      circle at 90% 85%,
+      color-mix(in srgb, var(--hairline) 4%, transparent),
+      transparent 25%
+    );
 }
 .section-container {
   width: 100%;
@@ -309,6 +318,8 @@ img {
   background: none;
   color: inherit;
   flex-shrink: 0;
+  /* Comfortable tap area on phones. */
+  min-height: 44px;
 }
 .brand-mark {
   height: 57px;
@@ -364,6 +375,7 @@ img {
   color: inherit;
   position: relative;
   min-height: 44px;
+  min-width: 32px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -500,6 +512,8 @@ img {
 .dots-nav button {
   width: 44px;
   height: 31px;
+  /* Comfortable tap height without moving the dot geometry. */
+  min-height: 32px;
   background: none;
   position: relative;
   display: grid;
@@ -1007,7 +1021,9 @@ img {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  filter: drop-shadow(4px 12px 8px color-mix(in srgb, var(--text) 9%, transparent));
+  filter: drop-shadow(
+    4px 12px 8px color-mix(in srgb, var(--text) 9%, transparent)
+  );
 }
 .product-category {
   position: absolute;
@@ -1211,7 +1227,11 @@ img {
   width: 27px;
   height: 27px;
   border-radius: 9px;
-  background: linear-gradient(140deg, var(--brand-gold), var(--brand-gold-soft));
+  background: linear-gradient(
+    140deg,
+    var(--brand-gold),
+    var(--brand-gold-soft)
+  );
   color: #3a2c00;
   flex: none;
 }
@@ -1604,7 +1624,10 @@ img {
   position: absolute;
   inset: auto 0 0;
   padding: 33px 23px 19px;
-  background: linear-gradient(transparent, color-mix(in srgb, var(--text) 80%, transparent));
+  background: linear-gradient(
+    transparent,
+    color-mix(in srgb, var(--text) 80%, transparent)
+  );
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
@@ -2096,7 +2119,9 @@ footer > a:hover {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  filter: drop-shadow(6px 16px 8px color-mix(in srgb, var(--text) 12%, transparent));
+  filter: drop-shadow(
+    6px 16px 8px color-mix(in srgb, var(--text) 12%, transparent)
+  );
 }
 .modal-copy {
   padding: 55px 32px 35px;
@@ -3546,8 +3571,16 @@ html.theme-anim *:not(.milk-layer):not(.milk-wave) {
    =========================================================================== */
 [data-theme="dark"] .section-2 {
   background-image:
-    radial-gradient(circle at 10% 15%, color-mix(in srgb, var(--brand-gold) 8%, transparent), transparent 25%),
-    radial-gradient(circle at 90% 85%, color-mix(in srgb, var(--brand-blue) 30%, transparent), transparent 30%);
+    radial-gradient(
+      circle at 10% 15%,
+      color-mix(in srgb, var(--brand-gold) 8%, transparent),
+      transparent 25%
+    ),
+    radial-gradient(
+      circle at 90% 85%,
+      color-mix(in srgb, var(--brand-blue) 30%, transparent),
+      transparent 30%
+    );
 }
 [data-theme="dark"] .gallery-placeholder {
   background: linear-gradient(145deg, #24356b, #3b57a8);
@@ -3703,7 +3736,9 @@ html.theme-anim *:not(.milk-layer):not(.milk-wave) {
   --utility-dock: 0px;
 }
 .section-container {
-  padding-bottom: calc(55px + var(--utility-dock) + env(safe-area-inset-bottom));
+  padding-bottom: calc(
+    55px + var(--utility-dock) + env(safe-area-inset-bottom)
+  );
 }
 @media (max-width: 639px) {
   :root {
@@ -3711,7 +3746,9 @@ html.theme-anim *:not(.milk-layer):not(.milk-wave) {
   }
   /* Reserve the dock so fixed controls never sit on order buttons or card text. */
   .section-container {
-    padding-bottom: calc(46px + var(--utility-dock) + env(safe-area-inset-bottom));
+    padding-bottom: calc(
+      46px + var(--utility-dock) + env(safe-area-inset-bottom)
+    );
   }
   .theme-toggle {
     width: 48px;

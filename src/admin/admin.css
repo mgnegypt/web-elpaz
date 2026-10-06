@@ -25,7 +25,11 @@ body:has(.admin-boot),
 .admin-boot {
   --dash-bg: color-mix(in srgb, var(--admin-bg) 92%, var(--surface));
   --dash-surface: var(--admin-panel);
-  --dash-surface-2: color-mix(in srgb, var(--admin-panel) 88%, var(--surface-3));
+  --dash-surface-2: color-mix(
+    in srgb,
+    var(--admin-panel) 88%,
+    var(--surface-3)
+  );
   --dash-line: var(--admin-border);
   --dash-text: var(--admin-text);
   --dash-muted: var(--admin-muted);
@@ -43,14 +47,24 @@ body:has(.admin-boot),
   --dash-violet-soft: #6d5bd01f;
   --dash-radius: 18px;
   --dash-radius-sm: 12px;
-  --dash-shadow: 0 18px 44px color-mix(in srgb, var(--dash-text) 10%, transparent);
-  --dash-shadow-sm: 0 6px 18px color-mix(in srgb, var(--dash-text) 8%, transparent);
+  --dash-shadow: 0 18px 44px
+    color-mix(in srgb, var(--dash-text) 10%, transparent);
+  --dash-shadow-sm: 0 6px 18px
+    color-mix(in srgb, var(--dash-text) 8%, transparent);
   --dash-ring: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
 
   min-height: 100vh;
   background:
-    radial-gradient(1100px 520px at 92% -12%, var(--dash-accent-soft), transparent 60%),
-    radial-gradient(760px 420px at 4% 104%, var(--dash-gold-soft), transparent 62%),
+    radial-gradient(
+      1100px 520px at 92% -12%,
+      var(--dash-accent-soft),
+      transparent 60%
+    ),
+    radial-gradient(
+      760px 420px at 4% 104%,
+      var(--dash-gold-soft),
+      transparent 62%
+    ),
     var(--dash-bg);
   color: var(--dash-text);
   font-family: "Cairo", sans-serif;
@@ -70,8 +84,7 @@ body:has(.admin-boot),
 .visually-hidden {
   position: absolute;
   width: 1px;
-  height: 1px
-  ;
+  height: 1px;
   padding: 0;
   margin: -1px;
   overflow: hidden;
@@ -125,7 +138,11 @@ body:has(.admin-boot),
   flex-direction: column;
   gap: 18px;
   padding: 22px 16px;
-  background: linear-gradient(180deg, var(--brand-navy), color-mix(in srgb, var(--brand-navy) 82%, #000));
+  background: linear-gradient(
+    180deg,
+    var(--brand-navy),
+    color-mix(in srgb, var(--brand-navy) 82%, #000)
+  );
   color: #f6f8ff;
   border-inline-end: 1px solid #ffffff1f;
   z-index: 40;
@@ -145,7 +162,11 @@ body:has(.admin-boot),
   width: 42px;
   height: 42px;
   border-radius: 14px;
-  background: linear-gradient(150deg, var(--brand-gold), var(--brand-gold-soft));
+  background: linear-gradient(
+    150deg,
+    var(--brand-gold),
+    var(--brand-gold-soft)
+  );
   color: #3a2c00;
   flex: none;
 }
@@ -183,7 +204,10 @@ body:has(.admin-boot),
   font-size: 14.5px;
   font-weight: 600;
   text-align: start;
-  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
 }
 .nav-item:hover {
   background: #ffffff14;
@@ -244,6 +268,9 @@ body:has(.admin-boot),
 }
 .topbar-menu {
   display: none !important;
+  /* Comfortable touch target when the sidebar becomes off-canvas. */
+  min-width: 44px;
+  min-height: 44px;
 }
 .topbar-title {
   display: flex;
@@ -299,7 +326,9 @@ body:has(.admin-boot),
   border: 1px solid var(--dash-line);
   background: var(--dash-surface);
   color: inherit;
-  transition: box-shadow 0.18s ease, transform 0.18s ease;
+  transition:
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
 }
 .profile-chip:hover {
   box-shadow: var(--dash-shadow-sm);
@@ -324,6 +353,23 @@ body:has(.admin-boot),
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Long names, emails and numbers must ellipsize, never widen the shell. */
+.profile-chip,
+.profile-chip-text,
+.stat-pill,
+.stat-pill > div,
+.topbar-actions,
+.admin-main {
+  min-width: 0;
+}
+.stat-pill strong,
+.topbar-label,
+.profile-chip-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 .profile-chip-text small {
   font-size: 11.5px;
@@ -457,8 +503,12 @@ body:has(.admin-boot),
   border: 1px solid transparent;
   font-weight: 700;
   white-space: nowrap;
-  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease,
-    color 0.16s ease, border-color 0.16s ease;
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease,
+    border-color 0.16s ease;
 }
 .btn span {
   display: inline-block;
@@ -468,14 +518,18 @@ body:has(.admin-boot),
 .btn--sm {
   padding: 7px 12px;
   font-size: 13px;
+  min-height: 36px;
 }
 .btn--md {
   padding: 10px 16px;
   font-size: 14px;
+  /* Comfortable touch height without changing the visual weight. */
+  min-height: 44px;
 }
 .btn--lg {
   padding: 13px 20px;
   font-size: 15px;
+  min-height: 46px;
 }
 .btn--block {
   width: 100%;
@@ -496,7 +550,11 @@ body:has(.admin-boot),
   box-shadow: 0 14px 30px color-mix(in srgb, var(--brand-blue) 34%, transparent);
 }
 [data-theme="dark"] .btn--primary {
-  background: linear-gradient(150deg, var(--brand-gold), var(--brand-gold-soft));
+  background: linear-gradient(
+    150deg,
+    var(--brand-gold),
+    var(--brand-gold-soft)
+  );
   color: #2f2400;
   box-shadow: 0 10px 24px #0000004d;
 }
@@ -543,7 +601,13 @@ body:has(.admin-boot),
   border: 1px solid transparent;
   background: transparent;
   color: var(--dash-muted);
-  transition: background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+  /* Every icon control is at least a comfortable target, even the ghost size. */
+  min-width: 32px;
+  min-height: 32px;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
 }
 .icon-btn--md {
   width: 38px;
@@ -618,7 +682,10 @@ body:has(.admin-boot),
   background: var(--input-bg);
   color: var(--dash-text);
   font-size: 14px;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease;
 }
 .input::placeholder {
   color: color-mix(in srgb, var(--dash-muted) 80%, transparent);
@@ -715,7 +782,9 @@ body:has(.admin-boot),
   border-radius: 999px;
   border: 1px solid var(--dash-line);
   background: color-mix(in srgb, var(--dash-muted) 22%, transparent);
-  transition: background 0.2s ease, border-color 0.2s ease;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
   margin-top: 2px;
 }
 .switch-knob {
@@ -773,7 +842,10 @@ body:has(.admin-boot),
   background: var(--dash-surface);
   color: var(--dash-text);
   text-align: start;
-  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s ease;
 }
 .option:hover {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
@@ -1085,7 +1157,9 @@ body:has(.admin-boot),
   border-radius: var(--dash-radius);
   background: var(--dash-surface);
   overflow: hidden;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 .product-tile:hover {
   transform: translateY(-2px);
@@ -1510,7 +1584,11 @@ body:has(.admin-boot),
   width: 76px;
   height: 76px;
   border-radius: 50%;
-  background: linear-gradient(150deg, var(--brand-gold), var(--brand-gold-soft));
+  background: linear-gradient(
+    150deg,
+    var(--brand-gold),
+    var(--brand-gold-soft)
+  );
   color: #3a2c00;
   font-size: 30px;
   font-weight: 800;
@@ -1555,11 +1633,25 @@ body:has(.admin-boot),
 
 /* ------------------------------------------------------------ image fields */
 
+.image-field {
+  /* The preview + upload column pair must collapse when its own box is narrow,
+     not only when the whole viewport is (the field can live in a grid column). */
+  container-type: inline-size;
+  min-width: 0;
+}
 .image-field-top {
   display: grid;
   grid-template-columns: 168px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+}
+@container (max-width: 320px) {
+  .image-field-top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .image-preview {
+    max-width: 260px;
+  }
 }
 .image-preview {
   width: 100%;
@@ -1793,7 +1885,11 @@ body:has(.admin-boot),
   padding: clamp(22px, 3vw, 34px);
   background:
     radial-gradient(420px 260px at 88% 6%, #ffffff2e, transparent 60%),
-    linear-gradient(165deg, var(--brand-navy), color-mix(in srgb, var(--brand-navy) 78%, #000));
+    linear-gradient(
+      165deg,
+      var(--brand-navy),
+      color-mix(in srgb, var(--brand-navy) 78%, #000)
+    );
   color: #f4f7ff;
 }
 .auth-brand-mark {
@@ -1802,7 +1898,11 @@ body:has(.admin-boot),
   width: 52px;
   height: 52px;
   border-radius: 16px;
-  background: linear-gradient(150deg, var(--brand-gold), var(--brand-gold-soft));
+  background: linear-gradient(
+    150deg,
+    var(--brand-gold),
+    var(--brand-gold-soft)
+  );
   color: #3a2c00;
 }
 .auth-brand h2 {
@@ -1951,6 +2051,11 @@ body:has(.admin-boot),
 }
 .auth-link {
   align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding-inline: 6px;
   background: none;
   border: 0;
   color: var(--dash-accent);
@@ -1986,9 +2091,14 @@ body:has(.admin-boot),
   height: 96px;
   border-radius: 50%;
   color: #fff;
-  background: linear-gradient(150deg, var(--dash-success), color-mix(in srgb, var(--dash-success) 70%, #0b3d28));
+  background: linear-gradient(
+    150deg,
+    var(--dash-success),
+    color-mix(in srgb, var(--dash-success) 70%, #0b3d28)
+  );
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--dash-success) 40%, transparent);
-  animation: success-pop 0.5s cubic-bezier(0.2, 1.1, 0.3, 1.25) both,
+  animation:
+    success-pop 0.5s cubic-bezier(0.2, 1.1, 0.3, 1.25) both,
     success-ripple 1.5s ease-out 0.2s infinite;
 }
 @keyframes success-pop {
@@ -2133,6 +2243,17 @@ body:has(.admin-boot),
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 14px;
 }
+/* Grid and flex children must be allowed to shrink below their content width. */
+.admin-form-grid > *,
+.admin-inline-row > *,
+.image-field-controls > *,
+.image-field-actions > * {
+  min-width: 0;
+}
+.image-field-actions .btn,
+.image-field-controls .btn {
+  max-width: 100%;
+}
 .admin-inline-row {
   display: flex;
   align-items: flex-end;
@@ -2188,6 +2309,7 @@ body:has(.admin-boot),
   justify-content: center;
   gap: 8px;
   padding: 11px 18px;
+  min-height: 44px;
   border: 0;
   border-radius: 12px;
   background: linear-gradient(150deg, var(--brand-blue), var(--brand-navy));
@@ -2197,7 +2319,11 @@ body:has(.admin-boot),
   box-shadow: 0 10px 24px color-mix(in srgb, var(--brand-blue) 26%, transparent);
 }
 [data-theme="dark"] .admin-primary {
-  background: linear-gradient(150deg, var(--brand-gold), var(--brand-gold-soft));
+  background: linear-gradient(
+    150deg,
+    var(--brand-gold),
+    var(--brand-gold-soft)
+  );
   color: #2f2400;
 }
 .admin-primary:disabled {
@@ -2589,5 +2715,180 @@ body:has(.admin-boot),
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* --------------------------------------------------------------- audit log */
+/* Segmented filter control (the audit log's الكل / المريبة فقط switch). */
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--dash-line);
+  background: var(--dash-surface-2);
+}
+.segmented-item {
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dash-muted);
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+.segmented-item:hover {
+  color: var(--dash-text);
+}
+.segmented-item.is-active {
+  background: var(--dash-accent-soft);
+  color: var(--dash-text);
+  box-shadow: var(--dash-shadow-sm);
+}
+
+.audit-card .card-body {
+  padding-top: 4px;
+}
+.audit-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--dash-warn) 42%, transparent);
+  background: color-mix(in srgb, var(--dash-warn) 12%, transparent);
+  color: var(--dash-text);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.audit-banner svg {
+  flex: none;
+  color: var(--dash-warn);
+}
+.audit-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.audit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.audit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--dash-line);
+  min-width: 0;
+}
+.audit-row:last-child {
+  border-bottom: none;
+}
+.audit-row--flag {
+  background: color-mix(in srgb, var(--dash-danger, #d94a4a) 6%, transparent);
+  border-radius: 12px;
+  padding-inline: 10px;
+}
+.audit-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--dash-muted) 60%, transparent);
+}
+.audit-dot--flag {
+  background: var(--dash-danger, #d94a4a);
+}
+.audit-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.audit-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.audit-head strong {
+  font-size: 14.5px;
+  font-weight: 700;
+}
+.audit-detail {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--dash-muted);
+  overflow-wrap: anywhere;
+}
+.audit-meta {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--dash-muted);
+  text-align: end;
+  max-width: 46%;
+}
+.audit-meta span {
+  overflow-wrap: anywhere;
+}
+.empty-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 22px 4px;
+  color: var(--dash-muted);
+  font-size: 14px;
+}
+@media (max-width: 720px) {
+  .audit-meta {
+    max-width: 100%;
+    align-items: flex-start;
+    text-align: start;
+  }
+  .audit-row {
+    flex-wrap: wrap;
+  }
+}
+
+/* Small screens: every action is at least a comfortable thumb target. */
+@media (max-width: 480px) {
+  .btn,
+  .nav-item,
+  .icon-btn,
+  .admin-ghost,
+  .admin-primary,
+  .admin-filters button,
+  [role="group"] button {
+    min-height: 44px;
+    padding-block: 10px;
+  }
+  /* Icon-only controls need a square thumb target, not just height. */
+  .icon-btn,
+  .admin-icon {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* Segmented filters are content-width; keep a thumb-sized hit area. */
+  .segmented-item {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding-block: 10px;
   }
 }
