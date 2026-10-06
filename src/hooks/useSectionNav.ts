@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "./useReducedMotion";
-export function useSectionNav(
-  blocked: boolean,
-  onWave: () => void,
-  gestureBlocked = false,
-) {
+
+/**
+ * Single owner of "which section is on screen".
+ * A wave transition is only allowed to start when nothing else is mid-flight, and
+ * `isTransitioning` lets the navigation chrome go inert for the duration.
+ */
+export function useSectionNav(blocked: boolean, gestureBlocked = false) {
   const [section, setSection] = useState(0),
     [isTransitioning, setTransitioning] = useState(false),
     [waveDir, setWaveDir] = useState<"down" | "up">("down");
@@ -13,6 +15,7 @@ export function useSectionNav(
     timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const goTo = useCallback(
     (target: number) => {
+      // One transition at a time: conflicting section changes are dropped.
       if (
         blocked ||
         lock.current ||
@@ -24,9 +27,9 @@ export function useSectionNav(
       lock.current = true;
       setTransitioning(true);
       setWaveDir(target > section ? "down" : "up");
-      onWave();
+      // The content swaps while the opaque part of the milk covers the viewport.
       timers.current.push(
-        setTimeout(() => setSection(target), reduced ? 150 : 700),
+        setTimeout(() => setSection(target), reduced ? 150 : 760),
       );
       timers.current.push(
         setTimeout(
@@ -34,11 +37,11 @@ export function useSectionNav(
             lock.current = false;
             setTransitioning(false);
           },
-          reduced ? 300 : 1500,
+          reduced ? 300 : 1560,
         ),
       );
     },
-    [blocked, section, reduced, onWave],
+    [blocked, section, reduced],
   );
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
   useEffect(() => {

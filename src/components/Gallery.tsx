@@ -1,8 +1,9 @@
 import { useRef } from "react";
 import { Camera, ArrowLeft, ArrowRight, Expand } from "lucide-react";
-import { COPY, GALLERY } from "../data";
+import { useContent } from "../content/ContentContext";
 import { SectionTitle } from "./shared";
 export default function Gallery({ onOpen }: { onOpen: (i: number) => void }) {
+  const { gallery, copy } = useContent();
   const track = useRef<HTMLDivElement>(null),
     drag = useRef<{ x: number; left: number; distance: number } | null>(null),
     moved = useRef(false);
@@ -11,7 +12,7 @@ export default function Gallery({ onOpen }: { onOpen: (i: number) => void }) {
       <SectionTitle
         eyebrow="من وراء الكواليس"
         title="من مصنعنا ومزارعنا"
-        subtitle={COPY.gallerySubtitle}
+        subtitle={copy.gallerySubtitle}
       />
       <div
         ref={track}
@@ -45,10 +46,10 @@ export default function Gallery({ onOpen }: { onOpen: (i: number) => void }) {
           drag.current = null;
         }}
       >
-        {GALLERY.map((photo, i) => (
+        {gallery.map((photo, i) => (
           <button
             className="gallery-tile"
-            key={photo.caption}
+            key={`${photo.caption}-${i}`}
             onClick={() => {
               if (!moved.current) onOpen(i);
               moved.current = false;
@@ -76,7 +77,7 @@ export default function Gallery({ onOpen }: { onOpen: (i: number) => void }) {
             )}
             <span className="gallery-caption">
               <span>
-                <small dir="ltr">0{i + 1} / 06</small>
+                <small dir="ltr">0{i + 1} / 0{gallery.length}</small>
                 {photo.caption}
               </span>
               <Expand size={19} />

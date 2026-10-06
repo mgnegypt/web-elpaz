@@ -1,12 +1,7 @@
 import { useState } from "react";
 import { ArrowUpLeft, PackageSearch } from "lucide-react";
-import {
-  CATEGORIES,
-  CONTENT_STATUS,
-  COPY,
-  PRODUCTS,
-  type Product,
-} from "../data";
+import type { Product } from "../../shared/content.ts";
+import { useContent } from "../content/ContentContext";
 import { orderMessage, waLink } from "../lib/whatsapp";
 import { ProductImage, SectionTitle, WhatsAppIcon } from "./shared";
 export default function Products({
@@ -14,8 +9,9 @@ export default function Products({
 }: {
   onSelect: (product: Product) => void;
 }) {
+  const { products, categories, copy, contentStatus, site } = useContent();
   const [category, setCategory] = useState("الكل");
-  const filtered = PRODUCTS.filter(
+  const filtered = products.filter(
     (p) => category === "الكل" || p.category === category,
   );
   return (
@@ -23,10 +19,10 @@ export default function Products({
       <SectionTitle
         eyebrow="خيرات إلباظ"
         title="منتجاتنا"
-        subtitle={COPY.productsSubtitle}
+        subtitle={copy.productsSubtitle}
       />
       <div className="category-chips" role="group" aria-label="تصفية المنتجات">
-        {CATEGORIES.map((c) => (
+        {categories.map((c) => (
           <button
             key={c}
             className={category === c ? "active" : ""}
@@ -68,7 +64,7 @@ export default function Products({
                   webp={p.webp}
                   alt={p.name}
                 />
-                {CONTENT_STATUS.placeholderProductIds.includes(p.id) && (
+                {contentStatus.placeholderProductIds.includes(p.id) && (
                   <span className="sample-image">صورة توضيحية</span>
                 )}
               </div>
@@ -79,7 +75,7 @@ export default function Products({
             </button>
             <a
               className="wa-button"
-              href={waLink(orderMessage(p.name))}
+              href={waLink(site.whatsapp, orderMessage(p.name))}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}

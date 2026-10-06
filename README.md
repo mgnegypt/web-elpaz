@@ -1,57 +1,333 @@
-# البان إلباظ · Elban Elbaz
+# البان إلباظ — Elban Elbaz
 
-Arabic-first, RTL single-page website built with React 19, TypeScript, Vite, Tailwind CSS 4 and lucide-react. No backend, animation framework, or third-party form service.
+موقع تعريفي عربي (RTL) لشركة البان إلباظ: تصنيع وتعبئة وتغليف الألبان والأجبان والعسل
+الطبيعي وزيت الزيتون والمكسرات — مع لوحة تحكم محمية وخادم يحفظ طلبات الجملة.
 
-## Run
+Arabic RTL marketing site for Elban Elbaz (dairy, cheese, honey, olive oil, nuts) with a
+protected admin dashboard, persistent SQLite storage and a real backend for wholesale
+requests.
 
-```sh
-npm install
-npm run dev     # http://localhost:5173, bound to 0.0.0.0
-npm run build   # type checking + production bundle in dist/
-npm run preview
+---
+
+## 1. Requirements
+
+| Requirement | Why |
+| --- | --- |
+| **Node.js >= 22.13.0** | The database uses the built-in `node:sqlite` module — no native build step, no `better-sqlite3`. |
+| npm >= 10 | Lockfile is npm-generated. |
+| A **persistent disk** in production | SQLite file + WAL live on disk. |
+
+The server is written in TypeScript and runs directly on Node's built-in type stripping, so
+there is no server build step. `npm run build` type-checks everything (`tsc -b`) and produces
+the static frontend in `dist/`.
+
+```bash
+npm ci
 ```
 
-Vite accepts the Arena `*.e2b.app` preview hosts. All application assets use same-origin URLs. Deploy `dist/` to any static host; there are no server routes or API secrets.
+---
 
-## Owner editing / launch checklist
+## 2. Running it
 
-The business content lives in **`src/data.ts`**, with TODO comments:
+### Development (two servers)
 
-- Add the official logo (`LOGO_URL`), address, optional Maps URL, and verify the repeated secondary phone number.
-- Replace placeholder products 5–9, sizes, descriptions and reused photos.
-- Add actual factory/farm photos to `GALLERY`; blank URLs deliberately render branded placeholder tiles.
-- Replace the sample testimonials with real, authorized reviews. Replace/verify the statistics and all product, quality and FAQ claims.
-- Update `CONTENT_STATUS` when the corresponding demo content is replaced, to remove its explanatory labels.
-- **Images:** the four supplied Catbox PNG URLs are preserved. They were unreachable from the development environment. `public/images/*.webp` are **AI-generated illustrative packaging**, used only as local failure/timeout fallbacks. They are not official company photography. Replace these before launch, or provide reliable local official packshots. Set each `webp` field only to a WebP version of the **same** official photo (not a different picture). PNG remains the fallback for WebP support.
-- Set the real domain consistently in `src/data.ts`, `index.html` (canonical and Open Graph URL), `public/robots.txt`, and `public/sitemap.xml`.
-- Supply the official favicon, Apple touch icon, and 1200×630 share image. The current favicon is an intentionally temporary typographic mark.
-
-All Arabic text uses zero letter spacing. Cairo and Lalezar are also locally bundled through Fontsource for reliable Arabic typography when Google Fonts is inaccessible.
-
-## Interaction / implementation
-
-- Eight full-height sections with directional two-layer milk-wave transitions; active section and immediate neighbors only.
-- Keyboard (arrows, PageUp/PageDown, Space), passive wheel/touch gestures, desktop dots and mobile menu. Native internal scrolling includes a 300 ms edge dwell to avoid momentum jumps.
-- Pointer-drag product carousel, category filters and focus-trapped product modal; mobile bottom sheet with swipe-down handle.
-- Native horizontal gallery with drag controls and focus-trapped lightbox. Testimonials pause on hover/touch, and respect reduced motion.
-- Wholesale form validates locally, then opens an encoded WhatsApp message. **Submitting does not itself send an order**: the visitor confirms it in WhatsApp. No personal information is persisted by the site. A manual link is provided if a popup is blocked.
-- Sound module is lazy-imported; audio is created only from a sound-toggle click. The preference is stored safely in localStorage. A new page starts silent, with a saved-preference hint, until the visitor explicitly enables sound again.
-- Reduced-motion mode uses a 300 ms fade, final-value counters and no automatic review rotation or infinite motion.
-- Loader preloads the four hero images and awaits fonts, with a 1.4 s minimum and 6 s failsafe (plus the exit animation).
-
-## Browser checks
-
-With the dev or preview server running:
-
-```sh
-npm test
-# Optional:
-TEST_URL=http://localhost:4173 npm test
-node tests/capture.mjs  # screenshots in ignored .playwright/
+```bash
+cp .env.example .env      # optional
+npm run dev
 ```
 
-The Node test suite uses Playwright and a dev-only packaged Chromium, with a Linux shared-library fallback for restricted CI. Set `CHROMIUM_PATH` to use your own browser binary.
+* **API + backend** — <http://localhost:3001>
+* **Vite dev server** — <http://localhost:5173> ← open this one
 
-Tests cover all eight sections at **360×640, 390×844, 768×1024 and 1440×900**, horizontal overflow, filters, carousel drag, section swipes, modal focus restoration/trapping, locked navigation, gallery/lightbox controls, FAQs, wholesale validation and message encoding, and scroll-edge dwell. Browser tests deliberately fail the remote image requests to exercise the local fallback path.
+`npm run dev` starts both (`scripts/dev.mjs`). The browser only ever calls relative
+`/api/...` URLs; Vite proxies them to Express, so cookies stay same-origin.
 
-Production code is split into lazy section/dialog chunks; the Web Audio module is only downloaded on demand. Generated build and test artifacts are ignored by Git.
+Individual processes: `npm run dev:api` and `npm run dev:web`.
+
+### Production
+
+```bash
+npm ci
+npm run build
+NODE_ENV=production npm start      # serves dist/ and /api on PORT (default 3001)
+```
+
+Express serves the built frontend, the SPA fallback (`/` and `/admin`) and the JSON API from
+one process. Put it behind HTTPS (nginx, Caddy, Cloudflare, a PaaS router…).
+
+> **Static hosting is not enough.** This app needs a long-running Node process and a
+> writable disk. Netlify/Vercel static deploys, GitHub Pages and plain shared hosting cannot
+> serve this backend or keep the database.
+
+---
+
+## 3. Environment variables
+
+See `.env.example`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PORT` | `3001` | Port the Express server listens on. |
+| `DATA_DIR` | `.data` | Directory holding `elbaz.sqlite` and the one-time `setup-token`. **Private.** |
+| `TRUST_PROXY_HOPS` | `1` | Number of reverse proxies in front of the app. Keep at `1` behind one proxy; set `0` when directly exposed, otherwise per-IP rate limits can be spoofed via `X-Forwarded-For`. |
+| `ALLOWED_ORIGINS` | *(empty)* | Extra comma-separated origins allowed to make mutating requests. Same-origin is always allowed, so a single-domain deploy needs nothing here. |
+
+`.env` is git-ignored and must never be committed. Real environment variables always win over
+the file.
+
+---
+
+## 4. First admin setup
+
+There is **no default username or password**, and no seeded account.
+
+1. Start the server. On first run it creates `.data/setup-token` — a random **64-character**
+   one-time token written with `0600` permissions.
+2. Read it on the server:
+   ```bash
+   cat .data/setup-token
+   ```
+3. Open `/admin` and fill in the token, a username and a password (**minimum 12 characters**).
+4. The token file is **deleted immediately** after the first administrator is created, and
+   setup is permanently disabled.
+
+The token is never exposed over HTTP, never logged and never sent to the browser except when
+the operator types it into the setup form. If you lose it, restore the file before an admin
+exists; afterwards, setup cannot be repeated — create additional admins directly in SQLite if
+you ever need to.
+
+**No email password recovery, no multi-role system.** Keep the password somewhere safe.
+
+---
+
+## 5. Admin dashboard (`/admin`)
+
+Arabic RTL, protected, themed with the same light/dark toggle as the site.
+
+**Wholesale Requests** — search by name / phone / product, filter by status
+(`جديد`, `تم التواصل`, `مؤكد`, `مؤرشف`), paginate, change status, delete permanently.
+
+**Products** — add, edit, delete; category, description (short + long), weight/size,
+accent colour, image URL, WebP URL and fallback URL. **No uploads:** use a hosted HTTPS URL
+or a file under `public/images/`.
+
+**Site Content** — business and contact details, logo, WhatsApp number, hero slides
+(add / reorder / remove), all copy strings, about chips, categories, order units, product
+catalogue, section labels, statistics, gallery, reviews, FAQs, "why us" cards, SEO title and
+description, and the content-status flags.
+
+Every save is revision-checked: if another admin published first, the dashboard shows a
+conflict banner with the newer revision instead of silently overwriting it. Collection editing
+supports add, reorder (up/down) and remove.
+
+---
+
+## 6. Content model
+
+* `src/data.ts` is the **owner-editable seed**. It is compiled into `DEFAULT_CONTENT`
+  (`shared/content.ts`) and inserted **once**, when the database is created.
+* After that, **the database is the source of truth**. Editing `src/data.ts` later does *not*
+  overwrite published content — it only affects brand-new databases.
+* Public content is served from `GET /api/content` (with a `revision` field).
+* `GET /api/health` returns a liveness probe.
+* The public site loads content on boot and refreshes when the visitor returns to a visible
+  tab. The admin dashboard deliberately does **not** auto-refresh, so an editor's draft is
+  never replaced under them.
+* If the API is unreachable, the public site keeps rendering the bundled defaults rather than
+  showing an empty page — but it never claims a *request* was saved when it was not.
+
+---
+
+## 7. Wholesale requests
+
+The public form submits to `POST /api/wholesale-requests` and is validated on **both** the
+client (Zod via `shared/content.ts`) and the server.
+
+Required: valid name, a valid contact number, a positive quantity, a selected product/unit,
+and explicit consent to store the data. Rejected: invalid quantity, missing consent, filled
+honeypot, malformed payload, oversized body.
+
+* **Idempotency** — each submission carries a `requestKey` (`uuid`). Re-sending the same key
+  returns the existing record instead of creating a duplicate.
+* **Rate limiting** — per-IP limits on writes and on login.
+* **Honest failure** — if persistence fails, the visitor sees an error. The site never
+  pretends an order was saved.
+* **WhatsApp stays separate** — it is an explicit button next to the form. Opening it neither
+  sends a message automatically nor claims the order was confirmed. No payment processing.
+
+---
+
+## 8. Theme (light / dark)
+
+* First visit follows the system preference (`prefers-color-scheme`).
+* An explicit choice is stored in `localStorage` under **`elbaz-theme`**.
+* `public/theme-init.js` is a same-origin, non-deferred `<head>` script that sets
+  `document.documentElement.dataset.theme` and `style.colorScheme` **before the first paint** —
+  no flash of the wrong theme.
+* If `localStorage` is unavailable (private mode, blocked storage), everything still works;
+  only persistence is lost.
+* The toggle prefers the **View Transitions API**, with a circular reveal originating from the
+  toggle button. Browsers without it fall back to a short colour transition. Under
+  `prefers-reduced-motion: reduce` the switch is instant, and repeat clicks are ignored while a
+  transition is running.
+* Surfaces, text, borders, cards, inputs, menus, dialogs and admin UI all read from semantic
+  tokens, so both themes share one code path.
+* **Brand identity is preserved in dark mode** — blue, cream and gold accents stay, and product
+  photography keeps its original colours (no filters).
+
+---
+
+## 9. Milk-wave section transition
+
+The site's single-page section navigation is unchanged (`useSectionNav` owns the current
+section). The transition overlay (`src/components/MilkWave.tsx`) is pure **CSS + SVG** — no
+Three.js, no GSAP.
+
+* Three offset milk sheets with different phases, broad curved leading edges, a trailing
+  highlight band, rounded shoulders and merging droplets.
+* Directional: the overlay is rotated for upward navigation, so the curved edge always leads.
+* Section content only swaps while the opaque part of the milk covers the viewport.
+* Navigation goes `inert` for the duration, and conflicting section changes are dropped.
+* The overlay clears completely in both directions.
+* `prefers-reduced-motion` drops the sheets for a short simplified fade.
+
+Design inspiration for layered motion and restrained lighting came from
+[blendi-remade/dioramas](https://github.com/blendi-remade/dioramas). **No code, assets or
+implementation were copied, and no 3D/WebGL layer was added.**
+
+---
+
+## 10. Security
+
+* Helmet security headers + a strict Content-Security-Policy.
+* Rate limits on API reads, writes and login.
+* Zod schemas on every mutating endpoint.
+* Parameterised SQL everywhere (no string-built queries).
+* **scrypt** password hashing with a per-user salt; passwords are never stored or logged in
+  plaintext.
+* Timing-safe comparisons for the setup token and CSRF tokens.
+* `HttpOnly`, `SameSite=Strict` session cookies, `Secure` in production, **8-hour** expiry,
+  server-side session storage and server-side revocation on logout.
+* CSRF token required on every admin mutation, plus an origin check that rejects unlisted
+  `Origin` headers on writes.
+* Safe URL validation: only `http(s)`, protocol-relative and same-origin absolute paths —
+  `javascript:` and `data:` URLs are rejected.
+* `.data/`, `.env`, `server/`, `shared/`, `package-lock.json` and `*.sqlite*` are blocked by
+  both the Express app and the Vite dev server. They are never served.
+* In production the page cannot be framed (`frame-ancestors 'none'` + `X-Frame-Options: DENY`);
+  outside production framing is allowed so hosted previews keep working.
+
+**HTTPS is required in production** — session cookies are marked `Secure`, so login silently
+fails over plain HTTP. Terminate TLS at your proxy or platform.
+
+---
+
+## 11. Data, backups and retention
+
+Everything persistent lives in `DATA_DIR`:
+
+```
+.data/
+├── elbaz.sqlite        # content, admins, sessions, wholesale requests
+├── elbaz.sqlite-wal    # write-ahead log
+├── elbaz.sqlite-shm
+└── setup-token         # exists only before the first admin is created
+```
+
+* **Back up** the whole directory, or use `sqlite3 .data/elbaz.sqlite ".backup backup.sqlite"`.
+  Copying only the `.sqlite` file while the server is running can miss committed WAL data.
+* **Never commit** `.data/`, SQLite files, `.env` or real customer records. They are all in
+  `.gitignore`.
+* Wholesale requests contain personal data (name, phone). Keep the disk private, restrict
+  access, and delete records you no longer need from the dashboard. Data is stored only to
+  contact the customer about their order — the form says so, and consent is required and
+  enforced server-side.
+
+---
+
+## 12. Tests
+
+All suites use temporary databases in the OS temp directory. **Real site data is never
+touched.** The browser suites need the API on `:3001` and the dev server on `:5173`; the
+runner starts both for you.
+
+```bash
+npm run build        # type-check + production build
+npm run test:api     # backend + security (no browser needed)
+npm test             # browser / layout / theme / transition
+npm run test:admin   # admin dashboard integration
+npm run test:all     # everything
+npm run test:capture # optional: screenshots into .playwright/ (needs a running dev server)
+```
+
+Coverage highlights:
+
+* **API** — content + health, private-file blocking, persistence, idempotency, payload
+  rejection, cross-origin rejection, first-run setup (wrong token, short password, token
+  deletion, no repeat, hashed password), session protection, CSRF, revoked sessions, URL-scheme
+  rejection, seed-once semantics, revision conflicts, headers.
+* **Browser** — five viewports (360×640, 390×844, 768×1024, 1440×900, 844×390 landscape), no
+  horizontal overflow, bottom utility dock, 44px touch targets, carousel, filtering, gallery,
+  FAQ, dialogs, focus trap, section navigation, the wholesale form, light/dark theming
+  (system preference, persistence, private mode, no-flash, reduced motion, hit size, brand
+  preservation), the milk wave in both directions, and dev-server privacy.
+* **Admin** — first-run setup, login/logout, protected endpoints, request search, status change,
+  deletion, product create/edit/delete, content publishing, revision conflicts.
+
+---
+
+## 13. Project structure
+
+```
+index.html               # early /theme-init.js + SEO metadata
+public/                  # theme-init.js, favicon, apple-touch-icon, robots.txt, sitemap.xml, images/
+shared/content.ts        # Zod schemas, DEFAULT_CONTENT seed, shared types
+server/
+  index.ts               # entry point (env, listen, shutdown)
+  app.ts                 # Express app: API, security, static hosting
+  db.ts                  # node:sqlite schema, content + requests + admins
+  auth.ts                # scrypt hashing, sessions, CSRF secrets
+scripts/
+  dev.mjs                # API + Vite together
+  test.mjs               # isolated test runner
+src/
+  data.ts                # OWNER-EDITABLE SEED CONTENT
+  theme/theme.ts         # theme state, persistence, View Transitions
+  content/ContentContext.tsx
+  lib/api.ts             # /api client
+  components/            # public site (Hero, Products, MilkWave, ThemeToggle, Contact…)
+  admin/                 # AdminApp, RequestsPanel, ProductsPanel, ContentPanel, admin.css
+tests/                   # api, site, admin, browser launcher, capture
+```
+
+---
+
+## 14. SEO / metadata
+
+`index.html` carries the title, description, canonical, Open Graph tags, JSON-LD `Organization`
+data, favicon and Apple touch icon. `public/robots.txt` and `public/sitemap.xml` are in place.
+The SEO title and description are also editable from the dashboard and are applied to the live
+document.
+
+---
+
+## 15. Owner TODO placeholders
+
+These are **not** verified production content. Replace them before launch:
+
+* `YOUR-DOMAIN` in `index.html` (canonical + `og:url`), `src/data.ts` (`SITE.domain`),
+  `public/robots.txt`, `public/sitemap.xml`.
+* Official logo (`LOGO_URL` is empty, so the built-in text mark is used) and a real 1200×630
+  Open Graph image (currently a Catbox URL).
+* Company address and map link (`ADDRESS_TEXT` / `MAPS_URL` are empty and stay hidden).
+* The second phone number still repeats the first.
+* Products **5–9** reuse other products' photos. Local `.webp` packaging shots in
+  `public/images/` are AI-generated illustrations, not official photography. Some product
+  images are hosted on Catbox (`files.catbox.moe`).
+* Statistics, reviews and gallery images are placeholders. The dashboard's content-status flags
+  keep the on-screen "illustrative" notices visible until they are switched off.
+* All FAQs, policies, quality claims, delivery and payment terms need owner confirmation.
+
+---
+
+Powered by [mgn eg](https://www.facebook.com/mgndigital).

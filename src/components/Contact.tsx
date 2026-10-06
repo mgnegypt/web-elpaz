@@ -1,72 +1,143 @@
 import { useRef, useState } from "react";
-import { ArrowUpLeft, Mail, MapPin, Phone, Send } from "lucide-react";
 import {
-  ADDRESS_TEXT,
-  COPY,
-  MAPS_URL,
-  PRODUCTS,
-  SITE,
-  WHOLESALE_UNITS,
-} from "../data";
+  ArrowUpLeft,
+  CheckCircle2,
+  Loader2,
+  Mail,
+  MapPin,
+  Phone,
+  Send,
+  TriangleAlert,
+} from "lucide-react";
+import { wholesaleRequestSchema } from "../../shared/content.ts";
+import { useContent } from "../content/ContentContext";
+import { newRequestKey, submitWholesaleRequest } from "../lib/api";
 import { waLink, wholesaleMessage } from "../lib/whatsapp";
 import { BrandSocial, SectionTitle, WhatsAppIcon } from "./shared";
+
+type Errors = Record<string, string>;
+
 export default function Contact() {
+  const { site, products, units, copy } = useContent();
   const [name, setName] = useState(""),
-    [product, setProduct] = useState(PRODUCTS[0].name),
+    [contact, setContact] = useState(""),
+    [product, setProduct] = useState(products[0]?.name ?? "أخرى"),
     [quantity, setQuantity] = useState(""),
-    [unit, setUnit] = useState(WHOLESALE_UNITS[0]),
+    [unit, setUnit] = useState(units[0] ?? ""),
     [notes, setNotes] = useState(""),
-    [errors, setErrors] = useState<{ name?: string; quantity?: string }>({}),
-    [sent, setSent] = useState(false);
+    [consent, setConsent] = useState(false),
+    [honeypot, setHoneypot] = useState("");
+  const [errors, setErrors] = useState<Errors>({}),
+    [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  // One idempotency key per submission attempt: retrying can never duplicate the record.
+  const requestKey = useRef(newRequestKey());
   const nameRef = useRef<HTMLInputElement>(null),
-    quantityRef = useRef<HTMLInputElement>(null);
+    contactRef = useRef<HTMLInputElement>(null),
+    quantityRef = useRef<HTMLInputElement>(null),
+    consentRef = useRef<HTMLInputElement>(null);
   const message = wholesaleMessage(name, quantity, unit, product, notes);
+  const whatsappHref = waLink(site.whatsapp, message);
+
+  const reset = () => {
+    if (status !== "idle") setStatus("idle");
+  };
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const payload = {
+      name,
+      contact,
+      product,
+      unit,
+      quantity,
+      notes,
+      consent,
+      honeypot,
+      requestKey: requestKey.current,
+    };
+    // Same schema the server enforces, so the visitor sees Arabic messages immediately.
+    const parsed = wholesaleRequestSchema.safeParse(payload);
+    if (!parsed.success) {
+      const fieldErrors = parsed.error.flatten().fieldErrors as Record<string, string[]>;
+      const next: Errors = {};
+      for (const [field, messages] of Object.entries(fieldErrors)) {
+        if (messages?.[0]) next[field === "honeypot" ? "consent" : field] = messages[0];
+      }
+      setErrors(next);
+      setStatus("idle");
+      if (next.name) nameRef.current?.focus();
+      else if (next.contact) contactRef.current?.focus();
+      else if (next.quantity) quantityRef.current?.focus();
+      else if (next.consent) consentRef.current?.focus();
+      return;
+    }
+    setErrors({});
+    setStatus("saving");
+    try {
+      const result = await submitWholesaleRequest({
+        ...parsed.data,
+        consent: true,
+        notes: parsed.data.notes ?? "",
+        requestKey: payload.requestKey,
+      });
+      if (!result?.saved) throw new Error("not-saved");
+      setStatus("saved");
+      // A fresh key for the next order.
+      requestKey.current = newRequestKey();
+    } catch {
+      // Never pretend the order was stored when it was not.
+      setStatus("error");
+    }
+  };
+
   return (
     <div className="section-container contact-container">
       <SectionTitle
         eyebrow="خلينا على تواصل"
         title="تواصل معنا"
-        subtitle={COPY.contactSubtitle}
+        subtitle={copy.contactSubtitle}
       />
       <div className="contact-cards grid sm:grid-cols-3 gap-4">
         {[
           {
             icon: Mail,
             label: "البريد الإلكتروني",
-            value: SITE.email,
-            link: `mailto:${SITE.email}`,
+            value: site.email,
+            link: `mailto:${site.email}`,
           },
           {
             icon: Phone,
             label: "رقم التواصل",
-            value: SITE.phone,
-            link: `tel:${SITE.phone}`,
+            value: site.phone,
+            link: `tel:${site.phone}`,
           },
           {
             icon: Phone,
             label: "رقم التواصل الثاني",
-            value: SITE.secondPhone,
-            link: `tel:${SITE.secondPhone}`,
+            value: site.secondPhone,
+            link: `tel:${site.secondPhone}`,
           },
-        ].map(({ icon: Icon, label, value, link }) => (
-          <a key={label} href={link} className="contact-card">
-            <span className="contact-icon">
-              <Icon size={21} />
-            </span>
-            <span className="contact-label">{label}</span>
-            <strong dir="ltr">{value}</strong>
-            <ArrowUpLeft className="contact-card-arrow" size={16} />
-          </a>
-        ))}
+        ]
+          .filter((card) => card.value)
+          .map(({ icon: Icon, label, value, link }) => (
+            <a key={label} href={link} className="contact-card">
+              <span className="contact-icon">
+                <Icon size={21} />
+              </span>
+              <span className="contact-label">{label}</span>
+              <strong dir="ltr">{value}</strong>
+              <ArrowUpLeft className="contact-card-arrow" size={16} />
+            </a>
+          ))}
       </div>
-      {ADDRESS_TEXT && (
+      {site.address && (
         <div className="address-card">
           <MapPin size={28} />
-          <p>{ADDRESS_TEXT}</p>
+          <p>{site.address}</p>
           <a
             href={
-              MAPS_URL ||
-              `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(ADDRESS_TEXT)}`
+              site.mapsUrl ||
+              `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(site.address)}`
             }
             target="_blank"
             rel="noopener noreferrer"
@@ -77,40 +148,14 @@ export default function Contact() {
           </a>
         </div>
       )}
-      <form
-        className="wholesale-form"
-        noValidate
-        onSubmit={(e) => {
-          e.preventDefault();
-          const next: { name?: string; quantity?: string } = {};
-          if (!name.trim()) next.name = "من فضلك اكتب اسمك.";
-          if (
-            !quantity ||
-            !Number.isFinite(Number(quantity)) ||
-            Number(quantity) <= 0
-          )
-            next.quantity = "من فضلك أدخل كمية أكبر من صفر.";
-          setErrors(next);
-          setSent(false);
-          if (next.name) {
-            nameRef.current?.focus();
-            return;
-          }
-          if (next.quantity) {
-            quantityRef.current?.focus();
-            return;
-          }
-          window.open(waLink(message), "_blank", "noopener,noreferrer");
-          setSent(true);
-        }}
-      >
+      <form className="wholesale-form" noValidate onSubmit={submit}>
         <div className="form-heading">
           <span className="form-icon">
             <Send size={23} />
           </span>
           <div>
             <h2>طلب كميات الجملة</h2>
-            <p>املأ بياناتك، ونكمّل تفاصيل طلبك على واتساب.</p>
+            <p>املأ بياناتك ونحفظ طلبك، ونتواصل معك لتأكيد التفاصيل.</p>
           </div>
           <span className="form-tag">لشراكة تدوم</span>
         </div>
@@ -127,7 +172,7 @@ export default function Contact() {
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
-                setSent(false);
+                reset();
               }}
               required
               aria-invalid={!!errors.name}
@@ -140,16 +185,43 @@ export default function Contact() {
             )}
           </div>
           <div className="field">
+            <label htmlFor="contact">
+              رقم التواصل <span>*</span>
+            </label>
+            <input
+              id="contact"
+              ref={contactRef}
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              dir="ltr"
+              placeholder="01xxxxxxxxx"
+              value={contact}
+              onChange={(e) => {
+                setContact(e.target.value);
+                reset();
+              }}
+              required
+              aria-invalid={!!errors.contact}
+              aria-describedby={errors.contact ? "contact-error" : undefined}
+            />
+            {errors.contact && (
+              <small id="contact-error" role="alert">
+                {errors.contact}
+              </small>
+            )}
+          </div>
+          <div className="field">
             <label htmlFor="product">المنتج</label>
             <select
               id="product"
               value={product}
               onChange={(e) => {
                 setProduct(e.target.value);
-                setSent(false);
+                reset();
               }}
             >
-              {PRODUCTS.map((p) => (
+              {products.map((p) => (
                 <option key={p.id}>{p.name}</option>
               ))}
               <option>أخرى</option>
@@ -170,7 +242,7 @@ export default function Contact() {
               value={quantity}
               onChange={(e) => {
                 setQuantity(e.target.value);
-                setSent(false);
+                reset();
               }}
               required
               aria-invalid={!!errors.quantity}
@@ -189,10 +261,10 @@ export default function Contact() {
               value={unit}
               onChange={(e) => {
                 setUnit(e.target.value);
-                setSent(false);
+                reset();
               }}
             >
-              {WHOLESALE_UNITS.map((u) => (
+              {units.map((u) => (
                 <option key={u}>{u}</option>
               ))}
             </select>
@@ -208,34 +280,90 @@ export default function Contact() {
               value={notes}
               onChange={(e) => {
                 setNotes(e.target.value);
-                setSent(false);
+                reset();
               }}
             />
           </div>
         </div>
-        <button type="submit" className="wa-button">
-          <WhatsAppIcon size={21} />
-          أرسل الطلب عبر واتساب
-          <ArrowUpLeft size={19} />
+        {/* Honeypot: hidden from people, irresistible to bots. */}
+        <div className="honeypot" aria-hidden="true">
+          <label htmlFor="company-website">الموقع الإلكتروني</label>
+          <input
+            id="company-website"
+            name="company-website"
+            tabIndex={-1}
+            autoComplete="off"
+            value={honeypot}
+            onChange={(e) => setHoneypot(e.target.value)}
+          />
+        </div>
+        <label className="consent-row" htmlFor="storage-consent">
+          <input
+            id="storage-consent"
+            ref={consentRef}
+            type="checkbox"
+            checked={consent}
+            onChange={(e) => {
+              setConsent(e.target.checked);
+              reset();
+            }}
+            required
+            aria-invalid={!!errors.consent}
+            aria-describedby={errors.consent ? "consent-error" : undefined}
+          />
+          <span>
+            أوافق على تخزين بياناتي للتواصل معي بخصوص هذا الطلب.{" "}
+            <span className="optional">لن تُستخدم في أي غرض آخر.</span>
+          </span>
+        </label>
+        {errors.consent && (
+          <small id="consent-error" role="alert" className="consent-error">
+            {errors.consent}
+          </small>
+        )}
+        <button type="submit" className="wa-button submit-button" disabled={status === "saving"}>
+          {status === "saving" ? (
+            <Loader2 className="spin" size={21} />
+          ) : (
+            <Send size={21} />
+          )}
+          {status === "saving" ? "جاري الإرسال…" : "إرسال الطلب"}
         </button>
-        <p className="form-privacy">
-          بياناتك تُرسل مباشرة إلى واتساب، ولا يتم تخزينها على الموقع.
-        </p>
-        {sent && (
+        {status === "saved" && (
           <p className="form-success" role="status">
-            طلبك جاهز. إذا لم يفتح واتساب،{" "}
-            <a href={waLink(message)} target="_blank" rel="noopener noreferrer">
-              اضغط هنا لإرسال الطلب
-            </a>
-            .
+            <CheckCircle2 size={18} />
+            تم استلام طلبك وحفظه. هنتواصل معك في أقرب وقت لتأكيد التفاصيل.
           </p>
         )}
+        {status === "error" && (
+          <p className="form-error" role="alert">
+            <TriangleAlert size={18} />
+            تعذّر حفظ الطلب حاليًا، فمن فضلك حاول مرة أخرى بعد قليل.
+          </p>
+        )}
+        <div className="wa-alternative">
+          <span>أو كلّمنا على واتساب مباشرة</span>
+          <a
+            className="wa-button ghost"
+            href={whatsappHref}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <WhatsAppIcon size={19} />
+            فتح واتساب
+            <ArrowUpLeft size={18} />
+          </a>
+        </div>
+        <p className="form-privacy">
+          بياناتك تُحفظ على سيرفر الموقع للتواصل معك بخصوص الطلب. فتح واتساب لا يعني
+          تأكيد الطلب تلقائيًا.
+        </p>
       </form>
       <div className="social-section">
         <span>تابع جديدنا… وخليك قريب</span>
         <div className="social-links">
           <a
-            href={SITE.facebook}
+            href={site.facebook}
             target="_blank"
             rel="noopener noreferrer"
             aria-label="فيسبوك"
@@ -243,7 +371,7 @@ export default function Contact() {
             <BrandSocial type="facebook" />
           </a>
           <a
-            href={waLink()}
+            href={waLink(site.whatsapp)}
             target="_blank"
             rel="noopener noreferrer"
             aria-label="واتساب"
@@ -251,7 +379,7 @@ export default function Contact() {
             <WhatsAppIcon />
           </a>
           <a
-            href={SITE.instagram}
+            href={site.instagram}
             target="_blank"
             rel="noopener noreferrer"
             aria-label="إنستجرام"
@@ -265,7 +393,7 @@ export default function Contact() {
           إلباظ<span>خير الطبيعة، لكل بيت.</span>
         </span>
         <a
-          href={SITE.credit}
+          href={site.credit}
           target="_blank"
           rel="noopener noreferrer"
           dir="ltr"

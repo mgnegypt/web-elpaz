@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { IMAGES } from "../data";
+import { useContent } from "../content/ContentContext";
 import { BrandLogo } from "./shared";
 import MilkWave from "./MilkWave";
 import { useReducedMotion } from "../hooks/useReducedMotion";
 export default function Loader({ onDone }: { onDone: () => void }) {
+  const { hero } = useContent();
+  const slides = hero.slides;
   const [progress, setProgress] = useState(0),
     [exit, setExit] = useState(false);
   const reduced = useReducedMotion();
@@ -12,6 +14,7 @@ export default function Loader({ onDone }: { onDone: () => void }) {
       count = 0,
       ready = false,
       min = false;
+    const total = slides.length + 1; // slides + fonts
     const images: HTMLImageElement[] = [];
     const timers: ReturnType<typeof setTimeout>[] = [];
     const finish = () => {
@@ -23,10 +26,10 @@ export default function Loader({ onDone }: { onDone: () => void }) {
     };
     const loaded = () => {
       count++;
-      if (live) setProgress((count / 5) * 100);
-      if (count >= 5) finish();
+      if (live) setProgress((count / total) * 100);
+      if (count >= total) finish();
     };
-    IMAGES.forEach((item) => {
+    slides.forEach((item) => {
       const image = new Image();
       images.push(image);
       image.onload = loaded;
@@ -40,7 +43,7 @@ export default function Loader({ onDone }: { onDone: () => void }) {
     timers.push(
       setTimeout(() => {
         min = true;
-        if (count >= 5) finish();
+        if (count >= total) finish();
       }, 1400),
     );
     timers.push(
@@ -57,7 +60,7 @@ export default function Loader({ onDone }: { onDone: () => void }) {
         image.onerror = null;
       });
     };
-  }, [onDone, reduced]);
+  }, [onDone, reduced, slides]);
   return (
     <div
       className={`loader ${exit ? "loader-exit" : ""}`}

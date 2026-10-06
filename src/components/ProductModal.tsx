@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { X, Package, ArrowUpLeft } from "lucide-react";
-import { CONTENT_STATUS, type Product } from "../data";
+import type { Product } from "../../shared/content.ts";
+import { useContent } from "../content/ContentContext";
 import { useDialog } from "../hooks/useDialog";
 import { waLink, orderMessage } from "../lib/whatsapp";
 import { ProductImage, WhatsAppIcon } from "./shared";
@@ -11,6 +12,7 @@ export default function ProductModal({
   product: Product;
   onClose: () => void;
 }) {
+  const { contentStatus, site } = useContent();
   const ref = useDialog(onClose),
     start = useRef(0);
   return (
@@ -70,14 +72,14 @@ export default function ProductModal({
             </span>
           )}
           <p>{p.longDesc}</p>
-          {CONTENT_STATUS.placeholderProductIds.includes(p.id) && (
+          {contentStatus.placeholderProductIds.includes(p.id) && (
             <small className="muted">
               الصورة توضيحية وسيتم تحديثها بصورة المنتج.
             </small>
           )}
           <a
             className="wa-button"
-            href={waLink(orderMessage(p.name))}
+            href={waLink(site.whatsapp, orderMessage(p.name))}
             target="_blank"
             rel="noopener noreferrer"
           >

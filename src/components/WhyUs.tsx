@@ -5,20 +5,21 @@ import {
   BadgePercent,
   ArrowLeft,
 } from "lucide-react";
-import { COPY, WHY_US } from "../data";
+import { useContent } from "../content/ContentContext";
 import { SectionTitle } from "./shared";
 const icons = { Leaf, ShieldCheck, Truck, BadgePercent };
 export default function WhyUs({ goTo }: { goTo: (n: number) => void }) {
+  const { whyUs, copy } = useContent();
   return (
     <div className="section-container centered-section why-container">
       <SectionTitle
         eyebrow="وعدنا ليك"
         title="لماذا البان إلباظ؟"
-        subtitle={COPY.whySubtitle}
+        subtitle={copy.whySubtitle}
       />
       <div className="why-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        {WHY_US.map((item, i) => {
-          const Icon = icons[item.icon];
+        {whyUs.map((item, i) => {
+          const Icon = icons[item.icon as keyof typeof icons] ?? Leaf;
           return (
             <article
               className="why-card enter"

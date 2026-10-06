@@ -1,20 +1,13 @@
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import type { Product } from "./data";
-import { SECTION_NAMES, SEO_TITLE } from "./data";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import type { Product } from "../shared/content.ts";
+import { useContent, useContentState } from "./content/ContentContext";
 import { useSectionNav } from "./hooks/useSectionNav";
 import Hero from "./components/Hero";
 import Loader from "./components/Loader";
 import MilkWave from "./components/MilkWave";
 import Header from "./components/Header";
 import WhatsAppFab from "./components/WhatsAppFab";
-import SoundToggle from "./components/SoundToggle";
+import ThemeToggle from "./components/ThemeToggle";
 import DotsNav from "./components/DotsNav";
 import ProgressTop from "./components/ProgressTop";
 const Products = lazy(() => import("./components/Products"));
@@ -26,27 +19,16 @@ const Faq = lazy(() => import("./components/Faq"));
 const Contact = lazy(() => import("./components/Contact"));
 const ProductModal = lazy(() => import("./components/ProductModal"));
 const Lightbox = lazy(() => import("./components/Lightbox"));
+
 export default function App() {
+  const content = useContent();
+  const { source } = useContentState();
   const [loading, setLoading] = useState(true),
     [product, setProduct] = useState<Product | null>(null),
     [lightbox, setLightbox] = useState<number | null>(null),
-    [sound, setSound] = useState(false),
     [menu, setMenu] = useState(false);
-  const [rememberedSound, setRememberedSound] = useState(() => {
-    try {
-      return localStorage.getItem("elbaz-sound") === "true";
-    } catch {
-      return false;
-    }
-  });
-  const soundRef = useRef<typeof import("./lib/sound") | null>(null),
-    soundEnabled = useRef(false);
-  const play = useCallback(() => {
-    if (soundEnabled.current) soundRef.current?.whoosh();
-  }, []);
   const { section, goTo, isTransitioning, waveDir } = useSectionNav(
     loading || !!product || lightbox !== null,
-    play,
     menu,
   );
   const doneLoading = useCallback(() => setLoading(false), []);
@@ -57,26 +39,6 @@ export default function App() {
     },
     [goTo],
   );
-  // Preferences are remembered, but sound always requires a fresh explicit user gesture.
-  const toggleSound = async () => {
-    try {
-      if (!soundRef.current) soundRef.current = await import("./lib/sound");
-      if (!soundEnabled.current) await soundRef.current.initialize();
-      const next = !soundEnabled.current;
-      soundEnabled.current = next;
-      setSound(next);
-      setRememberedSound(next);
-      try {
-        localStorage.setItem("elbaz-sound", String(next));
-      } catch {
-        /* private mode */
-      }
-      if (next) soundRef.current.whoosh();
-    } catch {
-      soundEnabled.current = false;
-      setSound(false);
-    }
-  };
   useEffect(() => {
     if (!menu) return;
     const key = (e: KeyboardEvent) => {
@@ -85,10 +47,21 @@ export default function App() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [menu]);
+  const names = content.sectionNames;
   useEffect(() => {
     document.title =
-      section === 0 ? SEO_TITLE : `${SECTION_NAMES[section]} | البان إلباظ`;
-  }, [section]);
+      section === 0 ? content.seo.title : `${names[section]} | ${content.site.name}`;
+  }, [section, names, content.seo.title, content.site.name]);
+  // Keep the document metadata in step with published content.
+  useEffect(() => {
+    const set = (selector: string, value: string) => {
+      const node = document.querySelector(selector);
+      if (node) node.setAttribute("content", value);
+    };
+    set('meta[name="description"]', content.seo.description);
+    set('meta[property="og:title"]', content.seo.title);
+    set('meta[property="og:description"]', content.seo.description);
+  }, [content.seo]);
   const components = [
     <Hero
       active={section === 0}
@@ -108,7 +81,7 @@ export default function App() {
     <>
       <div
         id="site-content"
-        className={dark ? "theme-dark" : "theme-light"}
+        className={`${dark ? "theme-dark" : "theme-light"}${source === "fallback" ? " content-offline" : ""}`}
         inert={loading}
       >
         <Header
@@ -116,15 +89,16 @@ export default function App() {
           goTo={navigate}
           menu={menu}
           setMenu={setMenu}
+          blocked={isTransitioning}
         />
-        <main id="main-content" aria-label="البان إلباظ">
+        <main id="main-content" aria-label={content.site.name}>
           {components.map((component, i) =>
             Math.abs(i - section) <= 1 && (!loading || i === 0) ? (
               <section
                 key={`${i}-${i === section ? "active" : "neighbor"}`}
                 className={`section-shell section-${i} ${i === section ? "is-active" : ""} ${[3, 5].includes(i) ? "blue-section" : ""}`}
                 data-section-scroll
-                aria-label={SECTION_NAMES[i]}
+                aria-label={names[i]}
                 aria-hidden={i !== section}
                 inert={i !== section}
                 tabIndex={-1}
@@ -143,18 +117,18 @@ export default function App() {
           )}
         </main>
         <WhatsAppFab />
-        <SoundToggle
-          enabled={sound}
-          remembered={rememberedSound}
-          onToggle={toggleSound}
+        <ThemeToggle />
+        <DotsNav section={section} goTo={goTo} blocked={isTransitioning} />
+        <ProgressTop
+          section={section}
+          onClick={() => goTo(0)}
+          blocked={isTransitioning}
         />
-        <DotsNav section={section} goTo={goTo} />
-        <ProgressTop section={section} onClick={() => goTo(0)} />
         <div className="mobile-section-counter" dir="ltr">
           <b>0{section + 1}</b> / 08
         </div>
         <span className="sr-only" aria-live="polite">
-          {SECTION_NAMES[section]}
+          {names[section]}
         </span>
       </div>
       {isTransitioning && <MilkWave direction={waveDir} />}

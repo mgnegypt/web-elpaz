@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Check } from "lucide-react";
-import { CONTENT_STATUS, COPY, SITE, STATS } from "../data";
+import { useContent } from "../content/ContentContext";
 import { BrandLogo } from "./shared";
 import { useReducedMotion } from "../hooks/useReducedMotion";
 export default function About({ active }: { active: boolean }) {
+  const { site, copy, stats, contentStatus } = useContent();
   const [progress, setProgress] = useState(0);
   const reduced = useReducedMotion();
   useEffect(() => {
@@ -27,11 +28,11 @@ export default function About({ active }: { active: boolean }) {
         <BrandLogo large />
       </div>
       <span className="eyebrow">من أرضنا… لبيتك</span>
-      <h1>{SITE.name}</h1>
-      <h2>{COPY.aboutTagline}</h2>
-      <p className="about-description">{COPY.aboutDescription}</p>
+      <h1>{site.name}</h1>
+      <h2>{copy.aboutTagline}</h2>
+      <p className="about-description">{copy.aboutDescription}</p>
       <div className="about-chips">
-        {COPY.aboutChips.map((chip) => (
+        {copy.aboutChips.map((chip) => (
           <span key={chip}>
             <Check size={16} />
             {chip}
@@ -39,7 +40,7 @@ export default function About({ active }: { active: boolean }) {
         ))}
       </div>
       <div className="stats-grid grid grid-cols-2 sm:grid-cols-4">
-        {STATS.map((s) => (
+        {stats.map((s) => (
           <div className="stat" key={s.label}>
             <strong dir="ltr">
               {Math.round(s.value * (reduced ? 1 : progress))}
@@ -49,7 +50,7 @@ export default function About({ active }: { active: boolean }) {
           </div>
         ))}
       </div>
-      {CONTENT_STATUS.statsArePlaceholders && (
+      {contentStatus.statsArePlaceholders && (
         <small className="placeholder-note">
           أرقام توضيحية قيد التحديث والتأكيد.
         </small>

@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { FAQS } from "../data";
+import { useContent } from "../content/ContentContext";
 import { waLink } from "../lib/whatsapp";
 import { SectionTitle, WhatsAppIcon } from "./shared";
 export default function Faq() {
+  const { faqs, site } = useContent();
   const [open, setOpen] = useState<number | null>(0);
   return (
     <div className="section-container faq-container centered-section">
@@ -13,10 +14,10 @@ export default function Faq() {
         subtitle="إجابات واضحة، عشان تطلب وأنت مطمّن."
       />
       <div className="faq-list">
-        {FAQS.map((item, i) => (
+        {faqs.map((item, i) => (
           <article
             className={`faq-item ${open === i ? "open" : ""}`}
-            key={item.q}
+            key={`${item.q}-${i}`}
           >
             <h2>
               <button
@@ -50,7 +51,7 @@ export default function Faq() {
           className="wa-button"
           target="_blank"
           rel="noopener noreferrer"
-          href={waLink("السلام عليكم، عندي سؤال عن منتجاتكم")}
+          href={waLink(site.whatsapp, "السلام عليكم، عندي سؤال عن منتجاتكم")}
         >
           <WhatsAppIcon size={20} />
           اسألنا على واتساب

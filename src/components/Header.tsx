@@ -1,46 +1,49 @@
 import { Menu, X, ArrowUpLeft } from "lucide-react";
-import { SECTION_NAMES, SITE } from "../data";
+import { useContent } from "../content/ContentContext";
 import { BrandLogo } from "./shared";
 export default function Header({
   section,
   goTo,
   menu,
   setMenu,
+  blocked = false,
 }: {
   section: number;
   goTo: (n: number) => void;
   menu: boolean;
   setMenu: (open: boolean) => void;
+  blocked?: boolean;
 }) {
+  const { site, sectionNames, copy } = useContent();
   return (
     <>
       <header className="site-header">
         <button
           className="header-brand"
           onClick={() => goTo(0)}
-          aria-label="البان إلباظ - الرئيسية"
+          aria-label={`${site.name} - الرئيسية`}
         >
           <BrandLogo />
           <span>
-            {SITE.name}
-            <small>طبيعة نقية. طعم أصيل.</small>
+            {site.name}
+            <small>{copy.heroTagline}</small>
           </span>
         </button>
-        <nav className="header-nav" aria-label="التنقل الرئيسي">
+        <nav className="header-nav" aria-label="التنقل الرئيسي" inert={blocked}>
           {[0, 1, 3, 4].map((i) => (
             <button
               key={i}
               className={section === i ? "active" : ""}
               onClick={() => goTo(i)}
             >
-              {SECTION_NAMES[i]}
+              {sectionNames[i]}
             </button>
           ))}
           <button
             className={`nav-contact ${section === 7 ? "active" : ""}`}
             onClick={() => goTo(7)}
           >
-            تواصل معنا
+            {sectionNames[7]}
             <ArrowUpLeft size={15} />
           </button>
         </nav>
@@ -59,8 +62,9 @@ export default function Header({
           className="mobile-menu"
           id="mobile-nav"
           aria-label="قائمة أقسام الموقع"
+          inert={blocked}
         >
-          {SECTION_NAMES.map((name, i) => (
+          {sectionNames.map((name, i) => (
             <button
               className={section === i ? "active" : ""}
               key={name}
