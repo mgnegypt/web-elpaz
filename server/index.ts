@@ -34,6 +34,9 @@ const { app, db } = createApp({
   distDir: existsSync(join(projectRoot, "dist")) ? join(projectRoot, "dist") : null,
   allowedOrigins,
   trustProxyHops,
+  // The end-to-end suites sign in many times from one address; production keeps
+  // the real limits (see createApp in server/app.ts).
+  relaxRateLimits: process.env.NODE_ENV === "test",
 });
 
 const server = app.listen(port, "0.0.0.0", () => {

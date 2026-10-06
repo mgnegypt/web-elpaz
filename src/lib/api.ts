@@ -1,6 +1,11 @@
 // Thin fetch wrappers. The browser only ever uses relative /api/... URLs;
 // Vite proxies them to Express in dev and Express serves them in production.
-export type ContentResponse = Record<string, unknown> & { revision: number };
+import type { SiteEvent } from "../../shared/content.ts";
+
+export type ContentResponse = Record<string, unknown> & {
+  revision: number;
+  events?: SiteEvent[];
+};
 
 async function json<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {

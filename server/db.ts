@@ -7,9 +7,13 @@ import {
   DEFAULT_CONTENT,
   REQUEST_STATUSES,
   contentSchema,
+  eventSchema,
   type Content,
   type ContentDoc,
+  type EventInput,
   type RequestStatus,
+  type Role,
+  type SiteEvent,
   type WholesaleRequest,
 } from "../shared/content.ts";
 
@@ -37,12 +41,76 @@ export type Db = {
   setRequestStatus: (id: number, status: RequestStatus) => WholesaleRequest | null;
   deleteRequest: (id: number) => boolean;
   adminCount: () => number;
-  createAdmin: (username: string, passwordHash: string) => number;
-  findAdmin: (username: string) => { id: number; username: string; password_hash: string } | null;
+  countOwners: () => number;
+  createAdmin: (input: {
+    username: string;
+    passwordHash: string;
+    role: Role;
+    displayName?: string;
+    email?: string | null;
+    mustCompleteProfile?: boolean;
+    createdBy?: number | null;
+  }) => number;
+  findAdmin: (identifier: string) => AdminRow | null;
+  listAdmins: () => AdminRow[];
+  getAdmin: (id: number) => AdminRow | null;
+  updateAdmin: (id: number, patch: Partial<AdminPatch>) => AdminRow | null;
+  deleteAdmin: (id: number) => boolean;
+  touchLogin: (id: number) => void;
+  listEvents: () => SiteEvent[];
+  activeEvents: () => SiteEvent[];
+  createEvent: (input: EventInput) => SiteEvent;
+  updateEvent: (id: number, input: EventInput) => SiteEvent | null;
+  deleteEvent: (id: number) => boolean;
+  uploadsDir: string;
   setupTokenPath: string;
   readSetupToken: () => string | null;
   consumeSetupToken: () => void;
   close: () => void;
+};
+
+export type AdminRow = {
+  id: number;
+  username: string;
+  email: string | null;
+  display_name: string;
+  avatar_url: string;
+  password_hash: string;
+  role: string;
+  security_question: string;
+  security_answer_hash: string;
+  must_complete_profile: number;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+  last_login_at: string;
+  password_set?: number;
+};
+
+export type AdminPatch = {
+  username: string;
+  display_name: string;
+  email: string | null;
+  avatar_url: string;
+  role: Role;
+  password_hash: string;
+  security_question: string;
+  security_answer_hash: string;
+  must_complete_profile: number;
+  updated_at: string;
+};
+
+type EventRow = {
+  id: number;
+  title: string;
+  description: string;
+  image_url: string;
+  type: string;
+  start_at: string;
+  end_at: string;
+  active: number;
+  created_at: string;
+  updated_at: string;
 };
 
 type RequestRow = {
@@ -72,6 +140,19 @@ const toRequest = (row: RequestRow): WholesaleRequest => ({
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
+
+const toEvent = (row: EventRow): SiteEvent => {
+  const parsed = eventSchema.parse({
+    title: row.title,
+    description: row.description ?? "",
+    imageUrl: row.image_url ?? "",
+    type: (row.type ?? "announcement") as SiteEvent["type"],
+    startAt: row.start_at ?? "",
+    endAt: row.end_at ?? "",
+    active: Number(row.active) === 1,
+  });
+  return { ...parsed, id: Number(row.id), createdAt: row.created_at, updatedAt: row.updated_at };
+};
 
 /** A conflict the API turns into HTTP 409 so one admin cannot clobber newer content. */
 export class RevisionConflict extends Error {
@@ -127,10 +208,52 @@ export function openDb(dataDir: string): Db {
       revoked INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (admin_id) REFERENCES admins(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      image_url TEXT NOT NULL DEFAULT '',
+      type TEXT NOT NULL DEFAULT 'announcement',
+      start_at TEXT NOT NULL DEFAULT '',
+      end_at TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_active ON events(active);
   `);
+
+  // --- additive migrations: safe to run against an existing database -----------------
+  const columns = (table: string) => {
+    const rows = raw.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    return new Set(rows.map((row) => row.name));
+  };
+  const addColumn = (table: string, column: string, definition: string) => {
+    if (columns(table).has(column)) return;
+    raw.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  };
+
+  addColumn("admins", "role", "TEXT NOT NULL DEFAULT 'admin'");
+  addColumn("admins", "email", "TEXT");
+  addColumn("admins", "display_name", "TEXT NOT NULL DEFAULT ''");
+  addColumn("admins", "avatar_url", "TEXT NOT NULL DEFAULT ''");
+  addColumn("admins", "security_question", "TEXT NOT NULL DEFAULT ''");
+  addColumn("admins", "security_answer_hash", "TEXT NOT NULL DEFAULT ''");
+  addColumn("admins", "must_complete_profile", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("admins", "created_by", "INTEGER");
+  addColumn("admins", "last_login_at", "TEXT NOT NULL DEFAULT ''");
+  addColumn("admins", "updated_at", "TEXT NOT NULL DEFAULT ''");
+  addColumn("sessions", "security_verified", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("sessions", "ip", "TEXT NOT NULL DEFAULT ''");
+  addColumn("sessions", "user_agent", "TEXT NOT NULL DEFAULT ''");
+  addColumn("sessions", "last_seen_at", "TEXT NOT NULL DEFAULT ''");
+  raw.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_admins_email ON admins(email) WHERE email IS NOT NULL");
 
   const nowIso = () => new Date().toISOString();
   const setupTokenPath = join(dataDir, "setup-token");
+  // Uploaded images live beside the database, never inside the served app tree.
+  const uploadsDir = join(dataDir, "uploads");
+  mkdirSync(uploadsDir, { recursive: true });
 
   // Seed exactly once. Existing published content is never overwritten by src/data.ts changes.
   const existing = raw.prepare("SELECT COUNT(*) AS n FROM content").get() as { n: number };
@@ -160,6 +283,7 @@ export function openDb(dataDir: string): Db {
     raw,
     dataDir,
     setupTokenPath,
+    uploadsDir,
     getContent,
     saveContent(content, expectedRevision) {
       const current = getContent();
@@ -245,17 +369,141 @@ export function openDb(dataDir: string): Db {
       const row = raw.prepare("SELECT COUNT(*) AS n FROM admins").get() as { n: number };
       return Number(row.n);
     },
-    createAdmin(username, passwordHash) {
+    countOwners() {
+      const row = raw.prepare("SELECT COUNT(*) AS n FROM admins WHERE role = 'owner'").get() as {
+        n: number;
+      };
+      return Number(row.n);
+    },
+    createAdmin(input) {
+      const stamp = nowIso();
       const info = raw
-        .prepare("INSERT INTO admins (username, password_hash, created_at) VALUES (?, ?, ?)")
-        .run(username, passwordHash, nowIso());
+        .prepare(
+          `INSERT INTO admins
+             (username, email, display_name, avatar_url, password_hash, role,
+              security_question, security_answer_hash, must_complete_profile, created_by,
+              created_at, updated_at, last_login_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.username,
+          input.email ?? null,
+          input.displayName ?? input.username,
+          "",
+          input.passwordHash,
+          input.role,
+          "",
+          "",
+          input.mustCompleteProfile ? 1 : 0,
+          input.createdBy ?? null,
+          stamp,
+          stamp,
+          "",
+        );
       return Number(info.lastInsertRowid);
     },
-    findAdmin(username) {
+    /** Login accepts the username or the email (case-insensitive on email). */
+    findAdmin(identifier) {
       const row = raw
-        .prepare("SELECT id, username, password_hash FROM admins WHERE username = ?")
-        .get(username) as { id: number; username: string; password_hash: string } | undefined;
+        .prepare(
+          "SELECT * FROM admins WHERE username = ? OR (email IS NOT NULL AND lower(email) = lower(?)) LIMIT 1",
+        )
+        .get(identifier, identifier) as AdminRow | undefined;
       return row ?? null;
+    },
+    listAdmins() {
+      return raw
+        .prepare(
+          `SELECT id, username, email, display_name, avatar_url, '' AS password_hash, role,
+                  security_question, '' AS security_answer_hash, must_complete_profile,
+                  created_by, created_at, updated_at, last_login_at
+           FROM admins ORDER BY (role = 'owner') DESC, id ASC`,
+        )
+        .all() as AdminRow[];
+    },
+    getAdmin(id) {
+      const row = raw.prepare("SELECT * FROM admins WHERE id = ?").get(id) as AdminRow | undefined;
+      return row ?? null;
+    },
+    updateAdmin(id, patch) {
+      const keys = Object.keys(patch) as (keyof AdminPatch)[];
+      if (!keys.length) return this.getAdmin(id);
+      const assignments = keys.map((key) => `${key} = ?`).join(", ");
+      raw
+        .prepare(`UPDATE admins SET ${assignments} WHERE id = ?`)
+        .run(...keys.map((key) => patch[key] as string | number | null), id);
+      return this.getAdmin(id);
+    },
+    deleteAdmin(id) {
+      const info = raw.prepare("DELETE FROM admins WHERE id = ?").run(id);
+      return Number(info.changes) > 0;
+    },
+    touchLogin(id) {
+      raw.prepare("UPDATE admins SET last_login_at = ? WHERE id = ?").run(nowIso(), id);
+    },
+    listEvents() {
+      return (raw.prepare("SELECT * FROM events ORDER BY id DESC").all() as EventRow[]).map(
+        toEvent,
+      );
+    },
+    /** Only events that are active *and* inside their optional date window. */
+    activeEvents() {
+      const now = Date.now();
+      return (raw.prepare("SELECT * FROM events WHERE active = 1 ORDER BY id DESC").all() as EventRow[])
+        .map(toEvent)
+        .filter((event) => {
+          if (event.startAt && Date.parse(event.startAt) > now) return false;
+          if (event.endAt && Date.parse(event.endAt) < now) return false;
+          return true;
+        });
+    },
+    createEvent(input) {
+      const stamp = nowIso();
+      const info = raw
+        .prepare(
+          `INSERT INTO events (title, description, image_url, type, start_at, end_at, active, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.title,
+          input.description,
+          input.imageUrl,
+          input.type,
+          input.startAt,
+          input.endAt,
+          input.active ? 1 : 0,
+          stamp,
+          stamp,
+        );
+      const row = raw
+        .prepare("SELECT * FROM events WHERE id = ?")
+        .get(Number(info.lastInsertRowid)) as EventRow;
+      return toEvent(row);
+    },
+    updateEvent(id, input) {
+      const info = raw
+        .prepare(
+          `UPDATE events SET title = ?, description = ?, image_url = ?, type = ?,
+                  start_at = ?, end_at = ?, active = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(
+          input.title,
+          input.description,
+          input.imageUrl,
+          input.type,
+          input.startAt,
+          input.endAt,
+          input.active ? 1 : 0,
+          nowIso(),
+          id,
+        );
+      if (Number(info.changes) === 0) return null;
+      const row = raw.prepare("SELECT * FROM events WHERE id = ?").get(id) as EventRow;
+      return toEvent(row);
+    },
+    deleteEvent(id) {
+      const info = raw.prepare("DELETE FROM events WHERE id = ?").run(id);
+      return Number(info.changes) > 0;
     },
     readSetupToken() {
       if (!existsSync(setupTokenPath)) return null;

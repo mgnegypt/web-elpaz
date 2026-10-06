@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { ArrowUpLeft, PackageSearch } from "lucide-react";
-import type { Product } from "../../shared/content.ts";
+import { ArrowUpLeft, BadgePercent, Clock, PackageSearch, Sparkles, Truck } from "lucide-react";
+import {
+  AVAILABILITY_LABELS,
+  isNewBadgeActive,
+  isOrderable,
+  stockLabel,
+  type Product,
+} from "../../shared/content.ts";
 import { useContent } from "../content/ContentContext";
 import { orderMessage, waLink } from "../lib/whatsapp";
 import { ProductImage, SectionTitle, WhatsAppIcon } from "./shared";
@@ -58,12 +64,28 @@ export default function Products({
                 <span className="product-open">
                   <ArrowUpLeft size={18} />
                 </span>
-                <ProductImage
-                  src={p.img}
-                  fallback={p.fallback}
-                  webp={p.webp}
-                  alt={p.name}
-                />
+                <span className="product-flags">
+                  {isNewBadgeActive(p) && (
+                    <span className="flag flag-new">
+                      <Sparkles size={13} />
+                      جديد
+                    </span>
+                  )}
+                  {p.discountPercent > 0 && (
+                    <span className="flag flag-discount">
+                      <BadgePercent size={13} />
+                      خصم {p.discountPercent}%
+                    </span>
+                  )}
+                  {p.badge && <span className="flag flag-custom">{p.badge}</span>}
+                </span>
+                {p.img || p.fallback ? (
+                  <ProductImage src={p.img} fallback={p.fallback} webp={p.webp} alt={p.name} />
+                ) : (
+                  <span className="product-placeholder" aria-hidden="true">
+                    <PackageSearch size={38} />
+                  </span>
+                )}
                 {contentStatus.placeholderProductIds.includes(p.id) && (
                   <span className="sample-image">صورة توضيحية</span>
                 )}
@@ -71,19 +93,44 @@ export default function Products({
               <div className="product-copy">
                 <h2>{p.name}</h2>
                 <p>{p.desc}</p>
+                {stockLabel(p) && (
+                  <span
+                    className={`stock-chip stock-chip--${p.availability}${
+                      p.quantity === 0 ? " stock-chip--out" : ""
+                    }`}
+                  >
+                    {p.availability === "coming_soon" ? (
+                      <Clock size={14} />
+                    ) : p.availability === "made_to_order" ? (
+                      <Truck size={14} />
+                    ) : (
+                      <PackageSearch size={14} />
+                    )}
+                    {stockLabel(p)}
+                  </span>
+                )}
               </div>
             </button>
-            <a
-              className="wa-button"
-              href={waLink(site.whatsapp, orderMessage(p.name))}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <WhatsAppIcon size={19} />
-              اطلب الآن
-              <ArrowUpLeft size={18} />
-            </a>
+            {isOrderable(p) ? (
+              <a
+                className="wa-button"
+                href={waLink(site.whatsapp, orderMessage(p.name))}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <WhatsAppIcon size={19} />
+                اطلب الآن
+                <ArrowUpLeft size={18} />
+              </a>
+            ) : (
+              <span className="wa-button wa-button--disabled" aria-disabled="true">
+                {p.availability === "coming_soon" ? <Clock size={18} /> : <PackageSearch size={18} />}
+                {AVAILABILITY_LABELS[p.availability] === AVAILABILITY_LABELS.coming_soon
+                  ? "قريبًا بإذن الله"
+                  : "غير متاح حاليًا"}
+              </span>
+            )}
           </article>
         ))}
       </div>

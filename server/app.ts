@@ -7,22 +7,43 @@ import { existsSync } from "node:fs";
 import { join, sep } from "node:path";
 import {
   REQUEST_STATUSES,
+  adminCreateSchema,
+  adminUpdateSchema,
+  completeProfileSchema,
   contentSchema,
-  credentialsSchema,
+  eventSchema,
+  loginSchema,
+  passwordChangeSchema,
+  productSchema,
+  profileUpdateSchema,
+  securityAnswerSchema,
+  securityChangeSchema,
   setupSchema,
   wholesaleRequestSchema,
   type RequestStatus,
 } from "../shared/content.ts";
-import { RevisionConflict, ensureSetupToken, openDb, type Db } from "./db.ts";
+import { RevisionConflict, ensureSetupToken, openDb, type AdminRow, type Db } from "./db.ts";
 import {
   SESSION_COOKIE,
   createSession,
   hashPassword,
+  hashSecret,
+  markSecurityVerified,
+  normalizeAnswer,
   readSession,
+  revokeAllSessions,
   revokeSession,
   safeEqual,
   verifyPassword,
+  verifySecret,
 } from "./auth.ts";
+import { createStreamHub } from "./bus.ts";
+import {
+  contentTypeFor,
+  isSafeUploadName,
+  storeUpload,
+  uploadMiddleware,
+} from "./uploads.ts";
 
 export type AppOptions = {
   dataDir: string;
@@ -48,6 +69,7 @@ export function createApp(options: AppOptions) {
 
   const db: Db = openDb(dataDir);
   ensureSetupToken(db);
+  const hub = createStreamHub();
 
   const app = express();
   app.disable("x-powered-by");
@@ -77,9 +99,7 @@ export function createApp(options: AppOptions) {
       referrerPolicy: { policy: "strict-origin-when-cross-origin" },
       // Only over HTTPS, and never with includeSubDomains: this app is often served from a
       // shared preview domain and must not pin HSTS onto sibling subdomains.
-      hsts: secureCookies
-        ? { maxAge: 15552000, includeSubDomains: false, preload: false }
-        : false,
+      hsts: secureCookies ? { maxAge: 15552000, includeSubDomains: false, preload: false } : false,
     }),
   );
   app.use(express.json({ limit: BODY_LIMIT }));
@@ -116,6 +136,10 @@ export function createApp(options: AppOptions) {
     rateLimit({
       windowMs,
       limit: relaxRateLimits ? 100000 : limit,
+      // The dashboard expects JSON errors like every other API response.
+      handler: (_req: Request, res: Response) => {
+        res.status(429).json({ error: "too-many-requests" });
+      },
       standardHeaders: "draft-7",
       legacyHeaders: false,
       validate: { trustProxy: false, xForwardedForHeader: false },
@@ -125,33 +149,67 @@ export function createApp(options: AppOptions) {
   const apiLimiter = limiter(15 * 60 * 1000, 600);
   const writeLimiter = limiter(10 * 60 * 1000, 30);
   const loginLimiter = limiter(15 * 60 * 1000, 10);
+  const uploadLimiter = limiter(15 * 60 * 1000, 60);
 
   // --- Private paths must never be reachable ---------------------------------
-  const PRIVATE = [
-    ".data",
-    ".env",
-    ".git",
-    "server",
-    "shared",
-    "node_modules",
-    "package-lock.json",
-  ];
+  const PRIVATE = [".data", ".env", ".git", "server", "shared", "node_modules", "package-lock.json"];
   app.use((req, res, next) => {
     const first = req.path.split("/").filter(Boolean)[0] ?? "";
-    if (PRIVATE.includes(first) || /\.(sqlite|sqlite3|db|db-wal|db-shm|ts|map|env)$/i.test(req.path)) {
+    if (
+      PRIVATE.includes(first) ||
+      /\.(sqlite|sqlite3|db|db-wal|db-shm|ts|map|env)$/i.test(req.path)
+    ) {
       res.status(404).json({ error: "not-found" });
       return;
     }
     next();
   });
 
+  // --- Uploaded images (public, but only ever the generated safe names) -------
+  app.get("/uploads/:name", (req, res) => {
+    const name = req.params.name;
+    if (!isSafeUploadName(name)) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    const file = join(db.uploadsDir, name);
+    if (!existsSync(file)) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    res.setHeader("Content-Type", contentTypeFor(name));
+    // Uploads are content-addressed by random name and never rewritten.
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.setHeader("Content-Disposition", "inline");
+    res.sendFile(file);
+  });
+
   // --- Public API ------------------------------------------------------------
+  // Long-lived SSE connection. Registered before the rate limiter so a background
+  // tab cannot exhaust the request budget, but capped to avoid connection floods.
+  const MAX_STREAM_CLIENTS = 200;
+  app.get("/api/stream", (req, res) => {
+    if (hub.size() >= MAX_STREAM_CLIENTS) {
+      res.status(503).json({ error: "too-many-streams" });
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    const remove = hub.add(res);
+    req.on("close", remove);
+    req.on("error", remove);
+  });
+
   app.get("/api/health", apiLimiter, (_req, res) => {
     res.json({ ok: true, status: "ok", service: "elban-elbaz", time: new Date().toISOString() });
   });
 
   app.get("/api/content", apiLimiter, (_req, res) => {
-    res.json(db.getContent());
+    res.json({ ...db.getContent(), events: db.activeEvents() });
   });
 
   app.post(
@@ -161,7 +219,9 @@ export function createApp(options: AppOptions) {
     (req: Request, res: Response) => {
       const parsed = wholesaleRequestSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(422).json({ error: "invalid-request", details: parsed.error.flatten().fieldErrors });
+        res
+          .status(422)
+          .json({ error: "invalid-request", details: parsed.error.flatten().fieldErrors });
         return;
       }
       const { name, contact, product, unit, quantity, notes, requestKey } = parsed.data;
@@ -175,6 +235,7 @@ export function createApp(options: AppOptions) {
           quantity,
           notes,
         });
+        if (created) hub.broadcast({ type: "events" });
         res.status(created ? 201 : 200).json({
           ok: true,
           saved: true,
@@ -189,11 +250,54 @@ export function createApp(options: AppOptions) {
     },
   );
 
+  // --- Session helpers -------------------------------------------------------
+  type Session = NonNullable<ReturnType<typeof readSession>>;
+  type AdminContext = { session: Session; admin: AdminRow };
+
+  const loadAdmin = (req: Request): AdminContext | null => {
+    const session = readSession(db, req.cookies?.[SESSION_COOKIE]);
+    if (!session) return null;
+    const admin = db.getAdmin(session.admin_id);
+    if (!admin) return null;
+    return { session, admin };
+  };
+
+  /**
+   * Single whitelisted shape for account records. Password hashes, security
+   * answer hashes, session tokens and CSRF tokens never leave the server.
+   * `session` is optional: it is only attached for the caller's own account.
+   */
+  const publicAdmin = (admin: AdminRow, session?: Session) => ({
+    id: admin.id,
+    username: admin.username,
+    email: admin.email ?? "",
+    displayName: admin.display_name || admin.username,
+    avatarUrl: admin.avatar_url || "",
+    role: admin.role === "owner" ? "owner" : "admin",
+    hasSecurityQuestion: !!admin.security_question,
+    mustCompleteProfile: Number(admin.must_complete_profile) === 1,
+    createdAt: admin.created_at,
+    updatedAt: admin.updated_at || admin.created_at,
+    lastLoginAt: admin.last_login_at || "",
+    ...(session
+      ? {
+          session: {
+            createdAt: session.created_at,
+            expiresAt: session.expires_at,
+            ip: session.ip || "",
+            userAgent: session.user_agent || "",
+            securityVerified: Number(session.security_verified) === 1,
+          },
+        }
+      : {}),
+  });
+
   // --- Admin auth ------------------------------------------------------------
   const adminRateLimited = [loginLimiter, requireSameOrigin, noStore];
 
   app.get("/api/admin/status", noStore, (_req, res) => {
-    res.json({ needsSetup: db.adminCount() === 0, setupAvailable: db.adminCount() === 0 && !!db.readSetupToken() });
+    const needsSetup = db.adminCount() === 0;
+    res.json({ needsSetup, setupAvailable: needsSetup && !!db.readSetupToken() });
   });
 
   app.post("/api/admin/setup", ...adminRateLimited, (req, res) => {
@@ -212,20 +316,38 @@ export function createApp(options: AppOptions) {
       res.status(403).json({ error: "invalid-setup-token" });
       return;
     }
-    const id = db.createAdmin(parsed.data.username, hashPassword(parsed.data.password));
+    // The first account is always the Owner and must finish its permanent credentials.
+    const id = db.createAdmin({
+      username: parsed.data.username,
+      passwordHash: hashPassword(parsed.data.password),
+      role: "owner",
+      displayName: parsed.data.username,
+      mustCompleteProfile: true,
+    });
     db.consumeSetupToken(); // one-time: token is deleted after the first admin is created
-    const session = createSession(db, id);
+    const session = createSession(db, id, {
+      securityVerified: true, // the one-time token already proved operator access
+      ip: req.ip ?? "",
+      userAgent: req.get("user-agent") ?? "",
+    });
+    db.touchLogin(id);
     setSessionCookie(res, session.token, secureCookies);
-    res.status(201).json({ ok: true, username: parsed.data.username, csrf: session.csrf });
+    res.status(201).json({
+      ok: true,
+      username: parsed.data.username,
+      role: "owner",
+      mustCompleteProfile: true,
+      csrf: session.csrf,
+    });
   });
 
   app.post("/api/admin/login", ...adminRateLimited, (req, res) => {
-    const parsed = credentialsSchema.safeParse(req.body);
+    const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(401).json({ error: "invalid-credentials" });
       return;
     }
-    const admin = db.findAdmin(parsed.data.username);
+    const admin = db.findAdmin(parsed.data.identifier);
     // Always run a verification so a missing user and a wrong password cost the same.
     const ok = admin
       ? verifyPassword(parsed.data.password, admin.password_hash)
@@ -234,23 +356,99 @@ export function createApp(options: AppOptions) {
       res.status(401).json({ error: "invalid-credentials" });
       return;
     }
-    const session = createSession(db, admin.id);
+
+    // Accounts with a security question must answer it before the session is usable.
+    const needsQuestion = !!admin.security_question;
+    const session = createSession(db, admin.id, {
+      securityVerified: !needsQuestion,
+      ip: req.ip ?? "",
+      userAgent: req.get("user-agent") ?? "",
+    });
+    db.touchLogin(admin.id);
     setSessionCookie(res, session.token, secureCookies);
-    res.json({ ok: true, username: admin.username, csrf: session.csrf });
+    if (needsQuestion) {
+      // Only the question itself is returned — never the answer or its hash.
+      res.json({
+        ok: true,
+        requiresSecurityAnswer: true,
+        question: admin.security_question,
+        pendingCsrf: session.csrf,
+      });
+      return;
+    }
+    res.json({
+      ok: true,
+      requiresSecurityAnswer: false,
+      username: admin.username,
+      displayName: admin.display_name || admin.username,
+      role: admin.role === "owner" ? "owner" : "admin",
+      csrf: session.csrf,
+    });
   });
 
-  const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
-    const session = readSession(db, req.cookies?.[SESSION_COOKIE]);
-    if (!session) {
+  /** Second factor: the security answer. Promotes a pending session to a full one. */
+  app.post("/api/admin/login/security", ...adminRateLimited, (req, res) => {
+    const context = loadAdmin(req);
+    if (!context) {
       res.status(401).json({ error: "unauthenticated" });
       return;
     }
-    res.locals.session = session;
+    if (Number(context.session.security_verified) === 1) {
+      res.json({ ok: true, alreadyVerified: true, csrf: context.session.csrf });
+      return;
+    }
+    if (!context.admin.security_question || !context.admin.security_answer_hash) {
+      res.status(409).json({ error: "no-security-question" });
+      return;
+    }
+    const parsed = securityAnswerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-answer" });
+      return;
+    }
+    if (!verifySecret(normalizeAnswer(parsed.data.answer), context.admin.security_answer_hash)) {
+      // Same generic failure as a wrong password, so nothing is leaked.
+      res.status(401).json({ error: "invalid-security-answer" });
+      return;
+    }
+    markSecurityVerified(db, context.session.token);
+    res.json({
+      ok: true,
+      username: context.admin.username,
+      displayName: context.admin.display_name || context.admin.username,
+      role: context.admin.role === "owner" ? "owner" : "admin",
+      csrf: context.session.csrf,
+    });
+  });
+
+  const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
+    const context = loadAdmin(req);
+    if (!context) {
+      res.status(401).json({ error: "unauthenticated" });
+      return;
+    }
+    // A session that has not passed the security question is not a real session.
+    if (Number(context.session.security_verified) !== 1) {
+      res.status(401).json({ error: "security-required" });
+      return;
+    }
+    res.locals.session = context.session;
+    res.locals.admin = context.admin;
+    next();
+  };
+
+  /** Only the Owner may manage other accounts. Enforced here, not in the UI. */
+  const requireOwner = (_req: Request, res: Response, next: NextFunction) => {
+    const admin = res.locals.admin as AdminRow;
+    if (admin.role !== "owner") {
+      res.status(403).json({ error: "owner-only" });
+      return;
+    }
     next();
   };
 
   const requireCsrf = (req: Request, res: Response, next: NextFunction) => {
-    const session = res.locals.session as { csrf: string };
+    const session = res.locals.session as Session;
     const provided = req.get("x-csrf-token") ?? "";
     if (!provided || !safeEqual(provided, session.csrf)) {
       res.status(403).json({ error: "csrf-rejected" });
@@ -259,16 +457,42 @@ export function createApp(options: AppOptions) {
     next();
   };
 
+  /**
+   * The Owner's first-run credentials must be set before mutating anything else.
+   * Reads stay open so the dashboard can render the completion screen.
+   */
+  const requireProfileComplete = (_req: Request, res: Response, next: NextFunction) => {
+    const admin = res.locals.admin as AdminRow;
+    if (Number(admin.must_complete_profile) === 1) {
+      res.status(428).json({ error: "profile-incomplete" });
+      return;
+    }
+    next();
+  };
+
   app.get("/api/admin/session", noStore, (req, res) => {
-    const session = readSession(db, req.cookies?.[SESSION_COOKIE]);
-    if (!session) {
+    const context = loadAdmin(req);
+    if (!context) {
       res.status(401).json({ error: "unauthenticated" });
       return;
     }
-    const admin = db.raw
-      .prepare("SELECT username FROM admins WHERE id = ?")
-      .get(session.admin_id) as { username: string } | undefined;
-    res.json({ authenticated: true, username: admin?.username ?? "", csrf: session.csrf });
+    const base = publicAdmin(context.admin, context.session);
+    if (Number(context.session.security_verified) !== 1) {
+      // Still pending the security answer: expose only what that step needs.
+      res.json({
+        authenticated: false,
+        requiresSecurityAnswer: true,
+        question: context.admin.security_question,
+        csrf: context.session.csrf,
+      });
+      return;
+    }
+    res.json({
+      authenticated: true,
+      ...base,
+      capabilities: { manageAdmins: context.admin.role === "owner" },
+      csrf: context.session.csrf,
+    });
   });
 
   app.post("/api/admin/logout", noStore, requireSameOrigin, (req, res) => {
@@ -278,15 +502,312 @@ export function createApp(options: AppOptions) {
     res.json({ ok: true });
   });
 
-  // --- Admin: wholesale requests --------------------------------------------
+  // --- Profile (self-service for the logged-in account) ----------------------
+  const profileRoutes = express.Router();
+  profileRoutes.use(noStore, requireSameOrigin, requireAdmin);
+
+  profileRoutes.get("/", (_req, res) => {
+    const admin = res.locals.admin as AdminRow;
+    const session = res.locals.session as Session;
+    res.json({ ...publicAdmin(admin, session), securityQuestion: admin.security_question });
+  });
+
+  /** First-run only: set the permanent email, password and security question. */
+  profileRoutes.post("/complete", requireCsrf, (req, res) => {
+    const admin = res.locals.admin as AdminRow;
+    // This step exists solely to finish a brand-new Owner account.
+    if (Number(admin.must_complete_profile) !== 1) {
+      res.status(409).json({ error: "profile-already-complete" });
+      return;
+    }
+    const parsed = completeProfileSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res
+        .status(422)
+        .json({ error: "invalid-profile", details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    const clash = db.findAdmin(parsed.data.email);
+    if (clash && clash.id !== admin.id) {
+      res.status(409).json({ error: "email-taken" });
+      return;
+    }
+    db.updateAdmin(admin.id, {
+      email: parsed.data.email.toLowerCase(),
+      display_name: parsed.data.displayName,
+      password_hash: hashPassword(parsed.data.password),
+      security_question: parsed.data.securityQuestion,
+      security_answer_hash: hashSecret(normalizeAnswer(parsed.data.securityAnswer)),
+      must_complete_profile: 0,
+      updated_at: new Date().toISOString(),
+    });
+    // Every session dies, including this one: the Owner must sign in again with
+    // the new email + password and then answer the security question.
+    revokeAllSessions(db, admin.id);
+    res.setHeader("Set-Cookie", clearSessionCookie(secureCookies));
+    res.json({ ok: true, mustRelogin: true });
+  });
+
+  profileRoutes.put("/", requireCsrf, requireProfileComplete, (req, res) => {
+    const admin = res.locals.admin as AdminRow;
+    const parsed = profileUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-profile", details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    if (parsed.data.email.toLowerCase() !== (admin.email ?? "").toLowerCase()) {
+      const clash = db.findAdmin(parsed.data.email);
+      if (clash && clash.id !== admin.id) {
+        res.status(409).json({ error: "email-taken" });
+        return;
+      }
+    }
+    const updated = db.updateAdmin(admin.id, {
+      display_name: parsed.data.displayName,
+      email: parsed.data.email.toLowerCase(),
+      avatar_url: parsed.data.avatarUrl,
+      updated_at: new Date().toISOString(),
+    });
+    res.json({
+      ok: true,
+      profile: publicAdmin(updated ?? admin, res.locals.session as Session),
+    });
+  });
+
+  profileRoutes.put("/password", requireCsrf, requireProfileComplete, (req, res) => {
+    const admin = res.locals.admin as AdminRow;
+    const parsed = passwordChangeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-password", details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    if (!verifyPassword(parsed.data.currentPassword, admin.password_hash)) {
+      res.status(401).json({ error: "invalid-current-password" });
+      return;
+    }
+    db.updateAdmin(admin.id, {
+      password_hash: hashPassword(parsed.data.newPassword),
+      updated_at: new Date().toISOString(),
+    });
+    // Any other device is signed out; the current session stays usable.
+    revokeAllSessions(db, admin.id, (res.locals.session as Session).token);
+    res.json({ ok: true });
+  });
+
+  profileRoutes.put("/security", requireCsrf, requireProfileComplete, (req, res) => {
+    const admin = res.locals.admin as AdminRow;
+    const parsed = securityChangeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res
+        .status(422)
+        .json({ error: "invalid-security", details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    // Setting a question for the first time is allowed; replacing one requires the answer.
+    if (admin.security_question && admin.security_answer_hash) {
+      if (!verifySecret(normalizeAnswer(parsed.data.currentAnswer), admin.security_answer_hash)) {
+        res.status(401).json({ error: "invalid-current-answer" });
+        return;
+      }
+    }
+    const updated = db.updateAdmin(admin.id, {
+      security_question: parsed.data.securityQuestion,
+      security_answer_hash: hashSecret(normalizeAnswer(parsed.data.securityAnswer)),
+      updated_at: new Date().toISOString(),
+    });
+    // The question comes back so the panel can render it; the answer never does.
+    res.json({
+      ok: true,
+      profile: {
+        ...publicAdmin(updated ?? admin, res.locals.session as Session),
+        securityQuestion: parsed.data.securityQuestion,
+      },
+    });
+  });
+
+  app.use("/api/admin/profile", profileRoutes);
+
+  // --- Owner-only account management ----------------------------------------
+  const ownersRoutes = express.Router();
+  ownersRoutes.use(noStore, requireSameOrigin, requireAdmin, requireProfileComplete, requireOwner);
+
+  ownersRoutes.get("/", (_req, res) => {
+    res.json({ items: db.listAdmins().map((item) => publicAdmin(item)) });
+  });
+
+  ownersRoutes.post("/", requireCsrf, (req, res) => {
+    const admin = res.locals.admin as AdminRow;
+    const parsed = adminCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-admin", details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    if (db.findAdmin(parsed.data.username)) {
+      res.status(409).json({ error: "username-taken" });
+      return;
+    }
+    if (db.findAdmin(parsed.data.email)) {
+      res.status(409).json({ error: "email-taken" });
+      return;
+    }
+    const id = db.createAdmin({
+      username: parsed.data.username,
+      displayName: parsed.data.displayName,
+      email: parsed.data.email.toLowerCase(),
+      passwordHash: hashPassword(parsed.data.password),
+      role: parsed.data.role,
+      createdBy: admin.id,
+    });
+    const created = db.getAdmin(id);
+    res.status(201).json({ ok: true, admin: created ? publicAdmin(created) : null });
+  });
+
+  ownersRoutes.put("/:id", requireCsrf, (req, res) => {
+    const actor = res.locals.admin as AdminRow;
+    const id = Number.parseInt(req.params.id, 10);
+    const target = db.getAdmin(id);
+    if (!target) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    const parsed = adminUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-admin", details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    const nameClash = db.findAdmin(parsed.data.username);
+    if (nameClash && nameClash.id !== id) {
+      res.status(409).json({ error: "username-taken" });
+      return;
+    }
+    const mailClash = db.findAdmin(parsed.data.email);
+    if (mailClash && mailClash.id !== id) {
+      res.status(409).json({ error: "email-taken" });
+      return;
+    }
+    // Never leave the site without an Owner.
+    if (target.role === "owner" && parsed.data.role !== "owner" && db.countOwners() <= 1) {
+      res.status(409).json({ error: "last-owner" });
+      return;
+    }
+    const patch: Parameters<Db["updateAdmin"]>[1] = {
+      username: parsed.data.username,
+      display_name: parsed.data.displayName,
+      email: parsed.data.email.toLowerCase(),
+      avatar_url: parsed.data.avatarUrl,
+      role: parsed.data.role,
+      updated_at: new Date().toISOString(),
+    };
+    if (parsed.data.password) patch.password_hash = hashPassword(parsed.data.password);
+    const updated = db.updateAdmin(id, patch);
+    if (parsed.data.password) revokeAllSessions(db, id); // force a re-login on password change
+    void actor;
+    res.json({ ok: true, admin: updated ? publicAdmin(updated) : null });
+  });
+
+  ownersRoutes.delete("/:id", requireCsrf, (req, res) => {
+    const actor = res.locals.admin as AdminRow;
+    const id = Number.parseInt(req.params.id, 10);
+    if (id === actor.id) {
+      res.status(409).json({ error: "cannot-delete-self" });
+      return;
+    }
+    const target = db.getAdmin(id);
+    if (!target) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    if (target.role === "owner" && db.countOwners() <= 1) {
+      res.status(409).json({ error: "last-owner" });
+      return;
+    }
+    db.deleteAdmin(id);
+    revokeAllSessions(db, id);
+    res.json({ ok: true, deleted: id });
+  });
+
+  app.use("/api/admin/admins", ownersRoutes);
+
+  // --- Shared authenticated surface -----------------------------------------
   const admin = express.Router();
   admin.use(noStore, requireSameOrigin, requireAdmin);
 
+  // --- Uploads ---------------------------------------------------------------
+  admin.post("/uploads", uploadLimiter, requireCsrf, requireProfileComplete, (req, res) => {
+    uploadMiddleware(req, res, (error: unknown) => {
+      if (error) {
+        const code =
+          error instanceof Error && "code" in error && error.code === "LIMIT_FILE_SIZE"
+            ? "file-too-large"
+            : "upload-failed";
+        res.status(code === "file-too-large" ? 413 : 422).json({ error: code });
+        return;
+      }
+      const file = (req as Request & { file?: { buffer: Buffer; originalname?: string } }).file;
+      if (!file) {
+        res.status(422).json({ error: "no-file" });
+        return;
+      }
+      const stored = storeUpload(db.uploadsDir, file);
+      if (!stored.ok) {
+        res.status(stored.reason === "too-large" ? 413 : 422).json({ error: stored.reason });
+        return;
+      }
+      res.status(201).json({ ok: true, upload: stored.value });
+    });
+  });
+
+  // --- Events / announcements -------------------------------------------------
+  admin.get("/events", (_req, res) => {
+    res.json({ items: db.listEvents() });
+  });
+
+  admin.post("/events", requireCsrf, requireProfileComplete, (req, res) => {
+    const parsed = eventSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-event", details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    const created = db.createEvent(parsed.data);
+    hub.broadcast({ type: "events" });
+    res.status(201).json({ ok: true, event: created });
+  });
+
+  admin.put("/events/:id", requireCsrf, requireProfileComplete, (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    const parsed = eventSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-event", details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    const updated = db.updateEvent(id, parsed.data);
+    if (!updated) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    hub.broadcast({ type: "events" });
+    res.json({ ok: true, event: updated });
+  });
+
+  admin.delete("/events/:id", requireCsrf, requireProfileComplete, (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    if (!db.deleteEvent(id)) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    hub.broadcast({ type: "events" });
+    res.json({ ok: true, deleted: id });
+  });
+
+  // --- Admin: wholesale requests --------------------------------------------
   admin.get("/requests", (req, res) => {
     const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
     const status = typeof req.query.status === "string" ? req.query.status : "";
     const page = Math.max(1, Number.parseInt(String(req.query.page ?? "1"), 10) || 1);
-    const pageSize = Math.min(100, Math.max(5, Number.parseInt(String(req.query.pageSize ?? "20"), 10) || 20));
+    const pageSize = Math.min(
+      100,
+      Math.max(5, Number.parseInt(String(req.query.pageSize ?? "20"), 10) || 20),
+    );
     const { items, total } = db.listRequests({
       search: search || undefined,
       status: status || undefined,
@@ -296,7 +817,7 @@ export function createApp(options: AppOptions) {
     res.json({ items, total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)) });
   });
 
-  admin.patch("/requests/:id", requireCsrf, (req, res) => {
+  admin.patch("/requests/:id", requireCsrf, requireProfileComplete, (req, res) => {
     const id = Number.parseInt(req.params.id, 10);
     const status = String((req.body ?? {}).status ?? "");
     if (!Number.isInteger(id) || !(REQUEST_STATUSES as readonly string[]).includes(status)) {
@@ -311,7 +832,7 @@ export function createApp(options: AppOptions) {
     res.json({ ok: true, request: updated });
   });
 
-  admin.delete("/requests/:id", requireCsrf, (req, res) => {
+  admin.delete("/requests/:id", requireCsrf, requireProfileComplete, (req, res) => {
     const id = Number.parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || !db.deleteRequest(id)) {
       res.status(404).json({ error: "not-found" });
@@ -325,7 +846,7 @@ export function createApp(options: AppOptions) {
     res.json(db.getContent());
   });
 
-  admin.put("/content", requireCsrf, (req, res) => {
+  admin.put("/content", requireCsrf, requireProfileComplete, (req, res) => {
     const revision = Number((req.body ?? {}).revision);
     if (!Number.isInteger(revision) || revision < 1) {
       res.status(422).json({ error: "revision-required" });
@@ -333,11 +854,15 @@ export function createApp(options: AppOptions) {
     }
     const parsed = contentSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(422).json({ error: "invalid-content", details: parsed.error.flatten().fieldErrors });
+      res
+        .status(422)
+        .json({ error: "invalid-content", details: parsed.error.flatten().fieldErrors });
       return;
     }
     try {
-      res.json(db.saveContent(parsed.data, revision));
+      const saved = db.saveContent(parsed.data, revision);
+      hub.broadcast({ type: "content", revision: saved.revision });
+      res.json(saved);
     } catch (error) {
       if (error instanceof RevisionConflict) {
         // Someone else published first — hand back the newer revision instead of overwriting it.
@@ -348,37 +873,46 @@ export function createApp(options: AppOptions) {
     }
   });
 
+  /**
+   * A product being created/edited. The `id` is assigned by the server, so the
+   * payload is validated against the product schema without it; every optional
+   * field then arrives with its default already applied.
+   */
+  const productInputSchema = productSchema.omit({ id: true });
+
   const productBody = (req: Request, res: Response) => {
     const revision = Number((req.body ?? {}).revision);
     if (!Number.isInteger(revision) || revision < 1) {
       res.status(422).json({ error: "revision-required" });
       return null;
     }
-    const product = (req.body ?? {}).product;
-    return { revision, product };
+    const parsed = productInputSchema.safeParse((req.body ?? {}).product);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-product", details: parsed.error.flatten().fieldErrors });
+      return null;
+    }
+    return { revision, product: parsed.data };
   };
 
-  admin.post("/products", requireCsrf, (req, res) => {
-    const body = productBody(req, res);
-    if (!body) return;
-    const current = db.getContent();
-    const nextProduct = {
-      ...(body.product as Record<string, unknown>),
-      id:
-        Math.max(0, ...current.products.map((p) => p.id)) + 1,
-    };
-    const parsed = contentSchema.safeParse({
-      ...current,
-      revision: undefined,
-      products: [...current.products, nextProduct],
-    });
+  const saveProducts = (
+    res: Response,
+    next: Record<string, unknown>[],
+    revision: number,
+    product: Record<string, unknown> | null,
+    /** 201 only for a genuine creation; edits and deletions are 200. */
+    status: 200 | 201 = 200,
+  ) => {
+    const parsed = contentSchema.safeParse({ ...db.getContent(), products: next });
     if (!parsed.success) {
       res.status(422).json({ error: "invalid-product", details: parsed.error.flatten().fieldErrors });
       return;
     }
     try {
-      const saved = db.saveContent(parsed.data, body.revision);
-      res.status(201).json({ ok: true, revision: saved.revision, product: saved.products[saved.products.length - 1] });
+      const saved = db.saveContent(parsed.data, revision);
+      hub.broadcast({ type: "content", revision: saved.revision });
+      res
+        .status(status)
+        .json({ ok: true, revision: saved.revision, product, products: saved.products });
     } catch (error) {
       if (error instanceof RevisionConflict) {
         res.status(409).json({ error: "revision-conflict", current: error.current });
@@ -386,9 +920,20 @@ export function createApp(options: AppOptions) {
       }
       res.status(500).json({ error: "save-failed" });
     }
+  };
+
+  admin.post("/products", requireCsrf, requireProfileComplete, (req, res) => {
+    const body = productBody(req, res);
+    if (!body) return;
+    const current = db.getContent();
+    const nextProduct = {
+      ...(body.product as Record<string, unknown>),
+      id: Math.max(0, ...current.products.map((p) => p.id)) + 1,
+    };
+    saveProducts(res, [...current.products, nextProduct], body.revision, nextProduct, 201);
   });
 
-  admin.put("/products/:id", requireCsrf, (req, res) => {
+  admin.put("/products/:id", requireCsrf, requireProfileComplete, (req, res) => {
     const body = productBody(req, res);
     if (!body) return;
     const id = Number.parseInt(req.params.id, 10);
@@ -397,27 +942,11 @@ export function createApp(options: AppOptions) {
       res.status(404).json({ error: "not-found" });
       return;
     }
-    const products = current.products.map((p) =>
-      p.id === id ? { ...(body.product as object), id } : p,
-    );
-    const parsed = contentSchema.safeParse({ ...current, products });
-    if (!parsed.success) {
-      res.status(422).json({ error: "invalid-product", details: parsed.error.flatten().fieldErrors });
-      return;
-    }
-    try {
-      const saved = db.saveContent(parsed.data, body.revision);
-      res.json({ ok: true, revision: saved.revision, product: saved.products.find((p) => p.id === id) });
-    } catch (error) {
-      if (error instanceof RevisionConflict) {
-        res.status(409).json({ error: "revision-conflict", current: error.current });
-        return;
-      }
-      res.status(500).json({ error: "save-failed" });
-    }
+    const products = current.products.map((p) => (p.id === id ? { ...body.product, id } : p));
+    saveProducts(res, products, body.revision, { ...body.product, id }, 200);
   });
 
-  admin.delete("/products/:id", requireCsrf, (req, res) => {
+  admin.delete("/products/:id", requireCsrf, requireProfileComplete, (req, res) => {
     const revision = Number((req.body ?? {}).revision ?? req.query.revision);
     if (!Number.isInteger(revision) || revision < 1) {
       res.status(422).json({ error: "revision-required" });
@@ -429,19 +958,12 @@ export function createApp(options: AppOptions) {
       res.status(404).json({ error: "not-found" });
       return;
     }
-    try {
-      const saved = db.saveContent(
-        { ...current, products: current.products.filter((p) => p.id !== id) },
-        revision,
-      );
-      res.json({ ok: true, revision: saved.revision });
-    } catch (error) {
-      if (error instanceof RevisionConflict) {
-        res.status(409).json({ error: "revision-conflict", current: error.current });
-        return;
-      }
-      res.status(500).json({ error: "save-failed" });
-    }
+    saveProducts(
+      res,
+      current.products.filter((p) => p.id !== id),
+      revision,
+      null,
+    );
   });
 
   app.use("/api/admin", admin);
@@ -473,7 +995,7 @@ export function createApp(options: AppOptions) {
     });
   }
 
-  return { app, db };
+  return { app, db, hub };
 }
 
 function setSessionCookie(res: Response, token: string, secure: boolean) {
@@ -487,13 +1009,7 @@ function setSessionCookie(res: Response, token: string, secure: boolean) {
 }
 
 function clearSessionCookie(secure: boolean) {
-  const parts = [
-    `${SESSION_COOKIE}=`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Strict",
-    "Max-Age=0",
-  ];
+  const parts = [`${SESSION_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=0"];
   if (secure) parts.push("Secure");
   return parts.join("; ");
 }

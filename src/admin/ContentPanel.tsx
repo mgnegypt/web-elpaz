@@ -11,13 +11,17 @@ import {
   TextField,
   moveItem,
 } from "./fields";
+import { ImageField } from "./ui";
 
 export default function ContentPanel({
   content,
   onContent,
+  onDirtyChange,
 }: {
   content: ContentDoc;
   onContent: (content: ContentDoc) => void;
+  /** Lets the shell warn instead of clobbering an unsaved draft on remote edits. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [draft, setDraft] = useState<Content>(content);
   const [busy, setBusy] = useState(false);
@@ -28,7 +32,15 @@ export default function ContentPanel({
   // Re-sync only when the server hands us a different revision.
   useEffect(() => {
     setDraft(content);
+    onDirtyChange?.(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content]);
+
+  // Report unsaved changes so the shell never overwrites them from a live update.
+  useEffect(() => {
+    onDirtyChange?.(JSON.stringify(draft) !== JSON.stringify(content));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, content]);
 
   const patch = <K extends keyof Content>(key: K, value: Content[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -141,12 +153,11 @@ export default function ContentPanel({
             value={draft.site.whatsapp}
             onChange={(whatsapp) => patch("site", { ...draft.site, whatsapp })}
           />
-          <TextField
-            label="رابط الشعار"
-            hint="(اتركه فارغًا لاستخدام الشعار النصي)"
-            dir="ltr"
+          <ImageField
+            label="شعار الموقع"
             value={draft.site.logoUrl}
             onChange={(logoUrl) => patch("site", { ...draft.site, logoUrl })}
+            hint="ارفع صورة الشعار من جهازك أو الصق رابطًا. اتركه فارغًا لاستخدام الشعار النصي."
           />
           <TextField
             label="رابط الموقع (Domain)"
@@ -254,10 +265,10 @@ export default function ContentPanel({
                   })
                 }
               />
-              <TextField
-                label="رابط الصورة"
-                dir="ltr"
+              <ImageField
+                label="صورة الشريحة"
                 value={slide.src}
+                webpValue={slide.webp}
                 onChange={(src) =>
                   patch("hero", {
                     ...draft.hero,
@@ -266,12 +277,7 @@ export default function ContentPanel({
                     ),
                   })
                 }
-              />
-              <TextField
-                label="رابط WebP"
-                dir="ltr"
-                value={slide.webp}
-                onChange={(webp) =>
+                onWebpChange={(webp) =>
                   patch("hero", {
                     ...draft.hero,
                     slides: draft.hero.slides.map((item, i) =>
@@ -279,6 +285,7 @@ export default function ContentPanel({
                     ),
                   })
                 }
+                hint="ارفع صورة من جهازك أو الصق رابطًا خارجيًا، مع نسخة WebP اختيارية."
               />
               <TextField
                 label="رابط بديل"

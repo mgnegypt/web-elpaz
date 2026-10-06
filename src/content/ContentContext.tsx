@@ -1,12 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { DEFAULT_CONTENT, type Content } from "../../shared/content.ts";
+import { DEFAULT_CONTENT, type Content, type SiteEvent } from "../../shared/content.ts";
 import { fetchContent, type ContentResponse } from "../lib/api";
+import { subscribeContentStream } from "../lib/live";
 
 export type ContentSource = "server" | "fallback";
 
 type ContentState = {
   content: Content;
   revision: number;
+  /** Events published from the dashboard, newest first. */
+  events: SiteEvent[];
   /** "fallback" means the API was unreachable and the bundled defaults are on screen. */
   source: ContentSource;
   ready: boolean;
@@ -28,7 +31,8 @@ export function ContentProvider({
     revision: number;
     source: ContentSource;
     ready: boolean;
-  }>({ content: DEFAULT_CONTENT, revision: 0, source: "fallback", ready: false });
+    events: SiteEvent[];
+  }>({ content: DEFAULT_CONTENT, revision: 0, source: "fallback", ready: false, events: [] });
 
   const refresh = useCallback(async () => {
     try {
@@ -36,6 +40,7 @@ export function ContentProvider({
       setState({
         content: document_ as unknown as Content,
         revision: document_.revision,
+        events: document_.events ?? [],
         source: "server",
         ready: true,
       });
@@ -51,13 +56,17 @@ export function ContentProvider({
 
   useEffect(() => {
     if (!autoRefresh) return;
-    // Public visitors get fresh content when they come back to the tab.
+    // Publishing in the dashboard reaches the site within a moment: the server
+    // pushes a frame and we re-read the document (no manual refresh needed).
+    const stopStream = subscribeContentStream(() => void refresh());
+    // Belt and braces for older browsers or a dropped stream.
     const onVisible = () => {
       if (document.visibilityState === "visible") void refresh();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
     return () => {
+      stopStream();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
@@ -80,4 +89,9 @@ export function useContentState() {
 /** The published content document, falling back to the bundled defaults when offline. */
 export function useContent(): Content {
   return useContentState().content;
+}
+
+/** Events the dashboard marked as visible (the server only sends active ones). */
+export function useEvents(): SiteEvent[] {
+  return useContentState().events;
 }

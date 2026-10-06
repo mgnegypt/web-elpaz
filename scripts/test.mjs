@@ -2,6 +2,7 @@
 // then tears everything down. Real site data under .data/ is never touched.
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +24,37 @@ if (!files) {
 }
 
 const needsServers = mode !== "api";
+
+/**
+ * The suites talk to fixed ports. A leftover server from an earlier run would
+ * silently answer for this one (and fail the whole run in confusing ways), so
+ * refuse to start instead.
+ */
+const assertPortsFree = async () => {
+  const busy = [];
+  for (const port of [3001, 5173]) {
+    const taken = await new Promise((resolve) => {
+      const socket = connect({ port, host: "127.0.0.1" });
+      socket.setTimeout(400);
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => resolve(false));
+      socket.once("timeout", () => {
+        socket.destroy();
+        resolve(false);
+      });
+    });
+    if (taken) busy.push(port);
+  }
+  if (busy.length) {
+    throw new Error(
+      `port${busy.length > 1 ? "s" : ""} ${busy.join(", ")} already in use — stop the leftover dev server(s) first`,
+    );
+  }
+};
+
 const dataDir = mkdtempSync(join(tmpdir(), "elbaz-test-data-"));
 const children = [];
 
@@ -61,6 +93,7 @@ const waitFor = async (url, timeoutMs) => {
 let exitCode = 1;
 try {
   if (needsServers) {
+    await assertPortsFree();
     const api = spawn(process.execPath, ["server/index.ts"], {
       cwd: root,
       env: {
@@ -93,10 +126,14 @@ try {
     console.log("[test] servers ready on :3001 and :5173");
   }
 
+  // TEST_FILTER narrows a run while iterating on one case, e.g.
+  // TEST_FILTER="dark/light" npm run test:admin
+  const filterArgs = process.env.TEST_FILTER ? [`--test-name-pattern=${process.env.TEST_FILTER}`] : [];
+
   exitCode = await new Promise((resolveCode) => {
     const runner = spawn(
       process.execPath,
-      ["--test", "--test-concurrency=1", ...files],
+      ["--test", "--test-concurrency=1", ...filterArgs, ...files],
       {
         cwd: root,
         env: { ...process.env, TEST_DATA_DIR: dataDir, TEST_URL: "http://127.0.0.1:5173" },

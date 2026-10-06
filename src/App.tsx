@@ -6,6 +6,7 @@ import Hero from "./components/Hero";
 import Loader from "./components/Loader";
 import MilkWave from "./components/MilkWave";
 import Header from "./components/Header";
+import Announcements from "./components/Announcements";
 import WhatsAppFab from "./components/WhatsAppFab";
 import ThemeToggle from "./components/ThemeToggle";
 import DotsNav from "./components/DotsNav";
@@ -91,6 +92,7 @@ export default function App() {
           setMenu={setMenu}
           blocked={isTransitioning}
         />
+        <Announcements />
         <main id="main-content" aria-label={content.site.name}>
           {components.map((component, i) =>
             Math.abs(i - section) <= 1 && (!loading || i === 0) ? (

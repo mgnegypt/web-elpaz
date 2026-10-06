@@ -1,51 +1,103 @@
-import { useCallback, useEffect, useState } from "react";
-import { Loader2, LockKeyhole, LogOut, ShieldCheck } from "lucide-react";
+// Dashboard shell: bootstrap → auth → application chrome (sidebar + header).
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentDoc } from "../../shared/content.ts";
-import { ApiFailure, adminApi, setCsrfToken } from "./api";
-import RequestsPanel from "./RequestsPanel";
+import { ApiFailure, adminApi, setCsrfToken, subscribeLive, type AdminSession } from "./api";
+import { Icons } from "./icons";
+import { Skeleton } from "./ui";
+import { ToastProvider, useToast } from "./ui";
+import AuthScreen from "./AuthScreen";
+import OverviewPanel from "./OverviewPanel";
 import ProductsPanel from "./ProductsPanel";
 import ContentPanel from "./ContentPanel";
+import EventsPanel from "./EventsPanel";
+import RequestsPanel from "./RequestsPanel";
+import AdminsPanel from "./AdminsPanel";
+import ProfilePanel from "./ProfilePanel";
 import ThemeToggle from "../components/ThemeToggle";
 
-type Phase = "checking" | "setup" | "login" | "ready";
+type Stage = "boot" | "auth" | "app";
+type AuthStart = { phase: "setup" | "login" | "complete" | "security"; question?: string };
 
-export default function AdminApp() {
-  const [phase, setPhase] = useState<Phase>("checking");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [token, setToken] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"requests" | "products" | "content">("requests");
+const NAV = [
+  { key: "overview", label: "نظرة عامة", icon: "dashboard" },
+  { key: "products", label: "المنتجات", icon: "package" },
+  { key: "events", label: "المناسبات", icon: "events" },
+  { key: "content", label: "محتوى الموقع", icon: "palette" },
+  { key: "requests", label: "طلبات الجملة", icon: "truck" },
+] as const;
+
+const OWNER_NAV = [{ key: "admins", label: "حسابات المشرفين", icon: "users" }] as const;
+
+function Dashboard() {
+  const toast = useToast();
+  const [session, setSession] = useState<AdminSession | null>(null);
   const [content, setContent] = useState<ContentDoc | null>(null);
+  const [tab, setTab] = useState<string>("overview");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [online, setOnline] = useState(false);
+  const [contentDirty, setContentDirty] = useState(false);
+  const [staleRevision, setStaleRevision] = useState<number | null>(null);
+  const dirtyRef = useRef(false);
+
+  const sessionRef = useRef<AdminSession | null>(null);
+  sessionRef.current = session;
 
   const loadContent = useCallback(async () => {
+    setStaleRevision(null);
     const document_ = await adminApi.content();
     setContent(document_);
     return document_;
   }, []);
 
   useEffect(() => {
+    dirtyRef.current = contentDirty;
+  }, [contentDirty]);
+
+  const [stage, setStage] = useState<Stage>("boot");
+  const [start, setStart] = useState<AuthStart>({ phase: "login" });
+
+  /** Reads the setup status, retrying transient failures (e.g. a cold API). */
+  const readStatus = async (attempts: number) => {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await adminApi.status();
+      } catch {
+        await new Promise((resolve) => window.setTimeout(resolve, 600 * (attempt + 1)));
+      }
+    }
+    return null;
+  };
+
+  /* ------------------------------------------------------------- bootstrap */
+  useEffect(() => {
     let live = true;
     (async () => {
       try {
-        const session = await adminApi.session();
+        const current = await adminApi.session();
         if (!live) return;
-        setCsrfToken(session.csrf);
-        setUsername(session.username);
-        await loadContent();
-        if (live) setPhase("ready");
-      } catch {
-        if (!live) return;
-        try {
-          const status = await adminApi.status();
-          if (live) setPhase(status.needsSetup ? "setup" : "login");
-        } catch {
-          if (live) {
-            setPhase("login");
-            setError("تعذّر الاتصال بالسيرفر.");
-          }
+        if (!current.authenticated) {
+          // The security question is still pending on this session.
+          setCsrfToken(current.csrf);
+          setStart({ phase: "security", question: current.question });
+          setStage("auth");
+          return;
         }
+        setCsrfToken(current.csrf);
+        setSession(current);
+        await loadContent();
+        if (live) setStage("app");
+      } catch (failure) {
+        if (!live) return;
+        // A 401 is the normal "not signed in yet" answer; anything else may just
+        // be the API still waking up, so retry before assuming anything.
+        const unauthorised = failure instanceof ApiFailure && failure.status === 401;
+        const status = await readStatus(unauthorised ? 2 : 5);
+        if (!live) return;
+        // Resolve the phase first, then mount the auth screen: it must never
+        // appear as the login form when the site actually needs first-run setup.
+        setStart({ phase: status?.needsSetup ? "setup" : "login" });
+        setStage("auth");
       }
     })();
     return () => {
@@ -53,179 +105,258 @@ export default function AdminApp() {
     };
   }, [loadContent]);
 
-  const authenticate = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setError("");
-    setBusy(true);
-    try {
-      const result =
-        phase === "setup"
-          ? await adminApi.setup(token.trim(), username.trim(), password)
-          : await adminApi.login(username.trim(), password);
-      setCsrfToken(result.csrf);
-      setUsername(result.username);
-      setPassword("");
-      setToken("");
-      await loadContent();
-      setPhase("ready");
-    } catch (failure) {
-      const status = failure instanceof ApiFailure ? failure.status : 0;
-      const code = (failure as Error).message;
-      setError(
-        code === "setup-already-complete"
-          ? "تم إنشاء الحساب بالفعل. سجّل الدخول من فضلك."
-          : code === "invalid-setup-token"
-            ? "رمز الإعداد غير صحيح."
-            : code === "invalid-credentials" || status === 401
-              ? "اسم المستخدم أو كلمة المرور غير صحيحة."
-              : status === 422
-                ? "تأكد من صحة البيانات: كلمة المرور 12 حرفًا على الأقل."
-                : "حدث خطأ، حاول مرة أخرى.",
-      );
-      if (code === "setup-already-complete") setPhase("login");
-    } finally {
-      setBusy(false);
-    }
-  };
+  /* ------------------------------------------------------------ live feed */
+  useEffect(() => {
+    if (stage !== "app") return;
+    const stop = subscribeLive(
+      (type) => {
+        if (type === "events") return;
+        if (dirtyRef.current) {
+          setStaleRevision((current) => current ?? -1);
+          return;
+        }
+        void adminApi
+          .content()
+          .then((document_) => {
+            setContent(document_);
+            if (type === "content") toast.push("info", "تم تحديث المحتوى من مصدر آخر.");
+          })
+          .catch(() => undefined);
+      },
+      setOnline,
+    );
+    return stop;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage]);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await adminApi.logout();
     } catch {
       /* the cookie is cleared server-side either way */
     }
     setCsrfToken("");
-    setPhase("login");
+    setSession(null);
     setContent(null);
+    setProfileOpen(false);
+    setStage("auth");
+    setStart({ phase: "login" });
+    toast.push("info", "تم تسجيل الخروج.");
+  }, [toast]);
+
+  const goTo = (next: string) => {
+    setMenuOpen(false);
+    if (next === "profile") {
+      setProfileOpen(true);
+      return;
+    }
+    setTab(next);
   };
 
-  if (phase === "checking") {
+  /** A 401 anywhere means the session died: return to the login screen. */
+  const guard = useCallback(
+    (failure: unknown) => {
+      if (failure instanceof ApiFailure && failure.status === 401) void logout();
+      return failure;
+    },
+    [logout],
+  );
+
+  const navItems = useMemo(() => {
+    const items = [...NAV] as { key: string; label: string; icon: keyof typeof Icons }[];
+    if (session?.capabilities.manageAdmins) items.push(...(OWNER_NAV as unknown as typeof items));
+    return items;
+  }, [session?.capabilities.manageAdmins]);
+
+  if (stage === "boot") {
     return (
-      <div className="admin-loading">
-        <Loader2 className="spin" size={26} />
-        جاري التحقق…
+      <div className="admin-boot">
+        <div className="boot-brand">
+          <span className="boot-mark">
+            <Icons.brand size={24} />
+          </span>
+          <div>
+            <strong>البان إلباظ</strong>
+            <span>لوحة التحكم</span>
+          </div>
+        </div>
+        <div className="boot-cards">
+          {[0, 1, 2].map((index) => (
+            <div className="glass-card skeleton-card" key={index}>
+              <Skeleton width="45%" height={16} />
+              <Skeleton width="85%" height={12} />
+              <Skeleton width="65%" height={12} />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
 
-  if (phase !== "ready") {
+  if (stage === "auth" || !session || !content) {
     return (
-      <div className="admin-auth">
-        <ThemeToggle />
-        <form className="admin-auth-card" onSubmit={authenticate}>
-          <span className="admin-badge">
-            {phase === "setup" ? <ShieldCheck size={18} /> : <LockKeyhole size={18} />}
-            {phase === "setup" ? "الإعداد الأول" : "دخول لوحة التحكم"}
-          </span>
-          <h1>{phase === "setup" ? "إنشاء حساب المدير" : "تسجيل الدخول"}</h1>
-          {phase === "setup" ? (
-            <p className="admin-note">
-              اقرأ الرمز من الملف <code dir="ltr">.data/setup-token</code> على السيرفر.
-              الرمز لمرة واحدة ويُحذف بعد إنشاء الحساب.
-            </p>
-          ) : (
-            <p className="admin-note">لوحة تحكم البان إلباظ — للمشرفين فقط.</p>
-          )}
-          {phase === "setup" && (
-            <label className="admin-field">
-              <span>رمز الإعداد (64 حرفًا)</span>
-              <input
-                name="token"
-                dir="ltr"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                autoComplete="off"
-                required
-              />
-            </label>
-          )}
-          <label className="admin-field">
-            <span>اسم المستخدم</span>
-            <input
-              name="username"
-              dir="ltr"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
-              required
-            />
-          </label>
-          <label className="admin-field">
-            <span>
-              كلمة المرور {phase === "setup" && <small>(12 حرفًا على الأقل)</small>}
-            </span>
-            <input
-              name="password"
-              type="password"
-              dir="ltr"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete={phase === "setup" ? "new-password" : "current-password"}
-              required
-            />
-          </label>
-          {error && (
-            <p className="admin-error" role="alert">
-              {error}
-            </p>
-          )}
-          <button className="admin-primary" type="submit" disabled={busy}>
-            {busy && <Loader2 className="spin" size={18} />}
-            {phase === "setup" ? "إنشاء الحساب" : "دخول"}
-          </button>
-          {phase === "login" && (
-            <p className="admin-hint">
-              لا توجد استعادة لكلمة المرور عن طريق البريد. احتفظ بها في مكان آمن.
-            </p>
-          )}
-        </form>
-      </div>
+      <AuthScreen
+        initialPhase={start.phase}
+        initialQuestion={start.question}
+        onSuccess={async (next) => {
+          setSession(next);
+          try {
+            await loadContent();
+          } catch (failure) {
+            guard(failure);
+          }
+          setStage("app");
+        }}
+      />
     );
   }
+
+  const activeLabel = [...NAV, ...OWNER_NAV].find((item) => item.key === tab)?.label ?? "";
 
   return (
     <div className="admin-shell">
-      <header className="admin-topbar">
-        <div className="admin-brand">
-          <strong>البان إلباظ</strong>
-          <span>لوحة التحكم</span>
+      <aside className={`sidebar${menuOpen ? " sidebar--open" : ""}`}>
+        <div className="sidebar-brand">
+          <span className="sidebar-mark">
+            <Icons.brand size={22} />
+          </span>
+          <div>
+            <strong>البان إلباظ</strong>
+            <span>لوحة التحكم</span>
+          </div>
         </div>
-        <nav className="admin-tabs">
-          {(
-            [
-              ["requests", "طلبات الجملة"],
-              ["products", "المنتجات"],
-              ["content", "محتوى الموقع"],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              className={tab === key ? "active" : ""}
-              onClick={() => setTab(key)}
-              aria-current={tab === key ? "page" : undefined}
-            >
-              {label}
-            </button>
-          ))}
+        <nav className="sidebar-nav" aria-label="أقسام اللوحة">
+          {navItems.map((item) => {
+            const Icon = Icons[item.icon];
+            return (
+              <button
+                key={item.key}
+                className={`nav-item${tab === item.key ? " nav-item--active" : ""}`}
+                onClick={() => goTo(item.key)}
+                aria-current={tab === item.key ? "page" : undefined}
+              >
+                <Icon size={19} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
         </nav>
-        <div className="admin-actions">
-          <span className="admin-user">{username}</span>
-          <ThemeToggle />
-          <button className="admin-ghost" onClick={logout}>
-            <LogOut size={16} />
-            خروج
+        <div className="sidebar-foot">
+          <button className="nav-item" onClick={() => setProfileOpen(true)}>
+            <Icons.user size={19} />
+            <span>الملف الشخصي</span>
           </button>
+          <button className="nav-item nav-item--danger" onClick={() => void logout()}>
+            <Icons.logout size={19} />
+            <span>تسجيل الخروج</span>
+          </button>
+          <p className="sidebar-note">
+            <Icons.shield size={13} />
+            {session.role === "owner" ? "صلاحية المالك" : "صلاحية مشرف"}
+          </p>
         </div>
-      </header>
-      <main className="admin-main">
-        {tab === "requests" && <RequestsPanel />}
-        {tab === "products" && content && (
-          <ProductsPanel content={content} onContent={setContent} />
-        )}
-        {tab === "content" && content && (
-          <ContentPanel content={content} onContent={setContent} />
-        )}
-      </main>
+      </aside>
+
+      {menuOpen && <div className="sidebar-scrim" onClick={() => setMenuOpen(false)} />}
+
+      <div className="admin-body">
+        <header className="topbar">
+          <button
+            className="icon-btn icon-btn--ghost topbar-menu"
+            onClick={() => setMenuOpen((open) => !open)}
+            aria-label="فتح القائمة"
+            aria-expanded={menuOpen}
+          >
+            <Icons.menu size={20} />
+          </button>
+          <div className="topbar-title">
+            {/* The panel below renders the page <h1>; this is only a locator hint. */}
+            <span className="topbar-label">{activeLabel}</span>
+            <span className={`live-chip${online ? " live-chip--on" : ""}`}>
+              {online ? <Icons.online size={13} /> : <Icons.offline size={13} />}
+              {online ? "تحديث فوري" : "غير متصل"}
+            </span>
+          </div>
+          <div className="topbar-actions">
+            {staleRevision !== null && (
+              <button
+                className="stale-chip"
+                onClick={() => {
+                  void adminApi.content().then((document_) => {
+                    setContent(document_);
+                    setStaleRevision(null);
+                  });
+                }}
+              >
+                <Icons.refresh size={14} />
+                نسخة أحدث على السيرفر — تحديث
+              </button>
+            )}
+            <ThemeToggle />
+            <button className="profile-chip" onClick={() => setProfileOpen(true)}>
+              {session.avatarUrl ? (
+                <img src={session.avatarUrl} alt="" />
+              ) : (
+                <span className="avatar-fallback avatar-fallback--sm">
+                  {session.displayName.trim().charAt(0) || "؟"}
+                </span>
+              )}
+              <span className="profile-chip-text">
+                <strong>{session.displayName}</strong>
+                <small>{session.role === "owner" ? "مالك" : "مشرف"}</small>
+              </span>
+            </button>
+          </div>
+        </header>
+
+        <main className="admin-main">
+          {tab === "overview" && (
+            <OverviewPanel session={session} content={content} online={online} onNavigate={goTo} />
+          )}
+          {tab === "products" && (
+            <ProductsPanel content={content} onContent={setContent} categories={content.categories} />
+          )}
+          {tab === "events" && <EventsPanel />}
+          {tab === "content" && (
+            <ContentPanel content={content} onContent={setContent} onDirtyChange={setContentDirty} />
+          )}
+          {tab === "requests" && <RequestsPanel />}
+          {tab === "admins" && session.capabilities.manageAdmins && <AdminsPanel selfId={session.id} />}
+          {tab === "admins" && !session.capabilities.manageAdmins && (
+            <div className="card">
+              <p className="confirm-text">هذه الصفحة متاحة للمالك فقط.</p>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {profileOpen && (
+        <ProfilePanel
+          onClose={() => setProfileOpen(false)}
+          onLogout={() => void logout()}
+          onProfileChange={(profile) =>
+            setSession((current) =>
+              current
+                ? {
+                    ...current,
+                    displayName: profile.displayName,
+                    email: profile.email,
+                    avatarUrl: profile.avatarUrl,
+                    hasSecurityQuestion: profile.hasSecurityQuestion,
+                  }
+                : current,
+            )
+          }
+        />
+      )}
     </div>
+  );
+}
+
+export default function AdminApp() {
+  return (
+    <ToastProvider>
+      <Dashboard />
+    </ToastProvider>
   );
 }

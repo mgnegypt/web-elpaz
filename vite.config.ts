@@ -50,6 +50,13 @@ export default defineConfig({
         target: "http://127.0.0.1:3001",
         changeOrigin: false,
         xfwd: true,
+        // Server-Sent Events must stream, not buffer.
+        ws: false,
+      },
+      // Uploaded images live in the private data directory and are served by Express.
+      "/uploads": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: false,
       },
     },
   },

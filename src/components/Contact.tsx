@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import {
   ArrowUpLeft,
   CheckCircle2,
+  Heart,
   Loader2,
   Mail,
   MapPin,
@@ -398,7 +399,7 @@ export default function Contact() {
           rel="noopener noreferrer"
           dir="ltr"
         >
-          Powered by mgn eg <span className="heart">♥</span>
+          Powered by mgn eg <Heart className="heart" size={13} aria-hidden="true" />
         </a>
       </footer>
     </div>
