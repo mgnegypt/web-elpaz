@@ -23,16 +23,31 @@ loadEnvFile(join(projectRoot, ".env"));
 
 const port = Number(process.env.PORT ?? 3001);
 const dataDir = resolve(projectRoot, process.env.DATA_DIR ?? ".data");
-const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 1);
-const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "")
+
+/**
+ * Proxy hops in front of the app. Defaults to 0 (trust nobody) so a
+ * directly-exposed server can never be fooled by a client-supplied
+ * X-Forwarded-For header. Deployments behind nginx/Caddy/Cloudflare must set
+ * TRUST_PROXY_HOPS=1 explicitly — see SECURITY.md.
+ */
+const trustProxyEnv = process.env.TRUST_PROXY_HOPS;
+const trustProxyHops =
+  trustProxyEnv === undefined ? 0 : Math.max(0, Number(trustProxyEnv) || 0);
+
+/** Optional comma-separated image hosts. Unset = any https host is allowed. */
+const imageHosts = (process.env.ALLOWED_IMAGE_HOSTS ?? "")
   .split(",")
-  .map((value) => value.trim())
+  .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
+
+const production = process.env.NODE_ENV === "production";
 
 const { app, db } = createApp({
   dataDir,
-  distDir: existsSync(join(projectRoot, "dist")) ? join(projectRoot, "dist") : null,
-  allowedOrigins,
+  distDir: existsSync(join(projectRoot, "dist"))
+    ? join(projectRoot, "dist")
+    : null,
+  imageHosts,
   trustProxyHops,
   // The end-to-end suites sign in many times from one address; production keeps
   // the real limits (see createApp in server/app.ts).
@@ -48,7 +63,29 @@ const server = app.listen(port, "0.0.0.0", () => {
     );
   }
   if (!existsSync(join(projectRoot, "dist"))) {
-    console.log("[elban-elbaz] dist/ not found — run `npm run build` before serving the site in production.");
+    console.log(
+      "[elban-elbaz] dist/ not found — run `npm run build` before serving the site in production.",
+    );
+  }
+  // Loud, actionable startup checks. Nothing here changes behaviour; it only makes an unsafe
+  // deployment obvious in the logs instead of silently weaker.
+  if (production && trustProxyEnv === undefined) {
+    console.warn(
+      "[elban-elbaz] WARNING: NODE_ENV=production without TRUST_PROXY_HOPS. " +
+        "X-Forwarded-For is ignored (rate limits see the proxy IP). " +
+        "Set TRUST_PROXY_HOPS=1 when running behind nginx/Caddy/Cloudflare and serve over HTTPS.",
+    );
+  }
+  if (production && trustProxyHops === 0) {
+    console.warn(
+      "[elban-elbaz] WARNING: TRUST_PROXY_HOPS=0 — if a reverse proxy forwards client IPs, " +
+        "every visitor shares one rate-limit bucket.",
+    );
+  }
+  if (production && imageHosts.length > 0) {
+    console.log(
+      `[elban-elbaz] image hosts restricted to: ${imageHosts.join(", ")}`,
+    );
   }
 });
 

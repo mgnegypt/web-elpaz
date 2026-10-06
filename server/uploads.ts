@@ -46,15 +46,39 @@ export function detectImage(buffer: Buffer): DetectedImage | null {
   return null;
 }
 
-/** Rejects HTML/SVG/XML payloads masquerading as images. */
+/**
+ * Rejects HTML/SVG/XML payloads masquerading as images.
+ *
+ * Two passes: the leading bytes (the usual "renamed .html" case) and, for files
+ * that look like real images, a scan for unambiguous script markers anywhere in
+ * the buffer — a polyglot that is a valid `GIF89a` yet carries a `<script>`
+ * block later on is still refused. Real photographs never contain these byte
+ * sequences, and the route already serves uploads with `nosniff`, so this is
+ * belt and braces rather than the only line of defence.
+ */
 export function looksLikeMarkup(buffer: Buffer): boolean {
-  const head = buffer.subarray(0, 512).toString("latin1").toLowerCase().trimStart();
-  return (
+  const head = buffer
+    .subarray(0, 512)
+    .toString("latin1")
+    .toLowerCase()
+    .trimStart();
+  if (
     head.startsWith("<!doctype") ||
     head.startsWith("<html") ||
     head.startsWith("<svg") ||
     head.startsWith("<?xml") ||
     head.startsWith("<script")
+  ) {
+    return true;
+  }
+  const body = buffer.toString("latin1").toLowerCase();
+  return (
+    body.includes("<script") ||
+    body.includes("<?php") ||
+    body.includes("<iframe") ||
+    body.includes("javascript:") ||
+    body.includes("onerror=") ||
+    body.includes("onload=")
   );
 }
 
@@ -77,14 +101,20 @@ export function storeUpload(
 ): { ok: true; value: StoredUpload } | { ok: false; reason: string } {
   const buffer = file.buffer;
   if (!buffer?.length) return { ok: false, reason: "empty-file" };
-  if (buffer.length > MAX_UPLOAD_BYTES) return { ok: false, reason: "too-large" };
+  if (buffer.length > MAX_UPLOAD_BYTES)
+    return { ok: false, reason: "too-large" };
   if (looksLikeMarkup(buffer)) return { ok: false, reason: "unsupported-type" };
   const detected = detectImage(buffer);
   if (!detected) return { ok: false, reason: "unsupported-type" };
 
   // Safe random name + extension derived from the detected type only.
   const filename = `${randomBytes(16).toString("hex")}${detected.extension}`;
-  writeFileSync(join(uploadsDir, filename), buffer, { mode: 0o644, flag: "wx" });
+  // "wx" fails instead of overwriting if a name ever collides; 0644 is enough
+  // because the file is served back to browsers as a static image.
+  writeFileSync(join(uploadsDir, filename), buffer, {
+    mode: 0o644,
+    flag: "wx",
+  });
   return {
     ok: true,
     value: {

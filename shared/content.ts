@@ -28,21 +28,52 @@ export const SEO_DESCRIPTION =
   "البان إلباظ: تصنيع وتعبئة وتغليف الألبان والأجبان والعسل الطبيعي وزيت الزيتون والمكسرات. نلبي جميع الطلبات وبكل الكميات.";
 
 /**
- * Only http(s) URLs, protocol-relative URLs and same-origin absolute paths are accepted.
- * This is what keeps `javascript:` and `data:` URLs out of href/src attributes.
+ * URL policy.
+ *
+ * Links: an absolute http(s) URL or a same-origin absolute path. Protocol-relative
+ * URLs (`//host`) are deliberately rejected — they are a classic validator bypass
+ * and buy nothing over an explicit scheme.
+ *
+ * Images: must be https (or a same-origin path). This is what the CSP allows, so
+ * validation and the browser agree; it also keeps `javascript:`, `data:`,
+ * `vbscript:` and `file:` out of every src/href we render.
  */
-const SAFE_URL = /^(?:https?:\/\/[^\s]+|\/\/[^\s]+|\/[^\s]*)$/i;
-export const isSafeUrl = (value: string) => value === "" || SAFE_URL.test(value);
-export const safeUrl = (label: string, required = false) => {
+const LINK_URL = /^https?:\/\/[^\s]+$/i;
+const IMAGE_URL = /^https:\/\/[^\s]+$/i;
+// A same-origin path: "/x", but never "//host" (protocol-relative).
+const SAME_ORIGIN_PATH = /^\/(?!\/)[^\s]*$/;
+
+export const isSafeUrl = (value: string) =>
+  value === "" || SAME_ORIGIN_PATH.test(value) || LINK_URL.test(value);
+
+export const isSafeImageUrl = (value: string) =>
+  value === "" || SAME_ORIGIN_PATH.test(value) || IMAGE_URL.test(value);
+
+const urlField = (
+  label: string,
+  { required = false, image = false }: { required?: boolean; image?: boolean },
+) => {
   const base = z
     .string()
     .trim()
     .max(2048)
     .refine((v) => (required ? v !== "" : true), { message: `${label} مطلوب` })
-    .refine(isSafeUrl, { message: `${label} غير صالح` });
+    .refine(image ? isSafeImageUrl : isSafeUrl, {
+      message: image
+        ? `${label} يجب أن يبدأ بـ https:// أو / (مسار داخلي)`
+        : `${label} غير صالح`,
+    });
   // Optional URLs default to "" so a form can omit them entirely.
   return required ? base : base.default("");
 };
+
+/** A link: http(s) or same-origin path. */
+export const safeUrl = (label: string, required = false) =>
+  urlField(label, { required });
+
+/** An image: https or same-origin path (matches the CSP img-src). */
+export const safeImageUrl = (label: string, required = false) =>
+  urlField(label, { required, image: true });
 
 const hexColor = z
   .string()
@@ -80,9 +111,9 @@ export const productSchema = z.object({
   longDesc: z.string().trim().max(800).default(""),
   size: z.string().trim().max(60).default("—"),
   /** Empty is allowed: the site falls back to the product colour + name. */
-  img: safeUrl("رابط الصورة"),
-  fallback: safeUrl("رابط الصورة البديلة"),
-  webp: safeUrl("رابط WebP"),
+  img: safeImageUrl("رابط الصورة"),
+  fallback: safeImageUrl("رابط الصورة البديلة"),
+  webp: safeImageUrl("رابط WebP"),
   color: hexColor.default("#f3e3c3"),
   // ---- orderability / stock (all optional so pre-existing content still loads) ----
   availability: z.enum(AVAILABILITY).default("available"),
@@ -99,9 +130,9 @@ export const productSchema = z.object({
 });
 
 export const heroSlideSchema = z.object({
-  src: safeUrl("رابط الصورة", true),
-  webp: safeUrl("رابط WebP"),
-  fallback: safeUrl("رابط الصورة البديلة"),
+  src: safeImageUrl("رابط الصورة", true),
+  webp: safeImageUrl("رابط WebP"),
+  fallback: safeImageUrl("رابط الصورة البديلة"),
   bg: hexColor,
   panel: hexColor,
   name: text(1, 120, "اسم الشريحة"),
@@ -119,7 +150,7 @@ export const reviewSchema = z.object({
   text: text(1, 600, "النص"),
 });
 export const galleryItemSchema = z.object({
-  src: safeUrl("رابط الصورة"),
+  src: safeImageUrl("رابط الصورة"),
   caption: text(1, 120, "الوصف"),
 });
 export const statSchema = z.object({
@@ -135,9 +166,13 @@ export const whyUsItemSchema = z.object({
 
 export const siteSchema = z.object({
   name: text(1, 120, "اسم النشاط"),
-  email: z.string().trim().max(160).refine((v) => v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), {
-    message: "بريد إلكتروني غير صالح",
-  }),
+  email: z
+    .string()
+    .trim()
+    .max(160)
+    .refine((v) => v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), {
+      message: "بريد إلكتروني غير صالح",
+    }),
   phone: text(1, 40, "رقم الهاتف"),
   secondPhone: z.string().trim().max(40),
   domain: safeUrl("رابط الموقع"),
@@ -146,7 +181,7 @@ export const siteSchema = z.object({
   credit: safeUrl("رابط الحقوق"),
   address: z.string().trim().max(300),
   mapsUrl: safeUrl("رابط الخريطة"),
-  logoUrl: safeUrl("رابط الشعار"),
+  logoUrl: safeImageUrl("رابط الشعار"),
   whatsapp: z
     .string()
     .trim()
@@ -200,26 +235,36 @@ const isoOrEmpty = z
   .string()
   .trim()
   .max(40)
-  .refine((v) => v === "" || !Number.isNaN(Date.parse(v)), { message: "تاريخ غير صالح" })
+  .refine((v) => v === "" || !Number.isNaN(Date.parse(v)), {
+    message: "تاريخ غير صالح",
+  })
   .default("");
 
 export const eventSchema = z
   .object({
     title: text(1, 140, "عنوان الإعلان"),
     description: z.string().trim().max(1200).default(""),
-    imageUrl: safeUrl("رابط الصورة"),
+    imageUrl: safeImageUrl("رابط الصورة"),
     type: z.enum(EVENT_TYPES).default("announcement"),
     startAt: isoOrEmpty,
     endAt: isoOrEmpty,
     active: z.boolean().default(true),
   })
-  .refine((v) => !v.startAt || !v.endAt || Date.parse(v.startAt) <= Date.parse(v.endAt), {
-    message: "تاريخ البداية يجب أن يسبق تاريخ النهاية",
-    path: ["endAt"],
-  });
+  .refine(
+    (v) =>
+      !v.startAt || !v.endAt || Date.parse(v.startAt) <= Date.parse(v.endAt),
+    {
+      message: "تاريخ البداية يجب أن يسبق تاريخ النهاية",
+      path: ["endAt"],
+    },
+  );
 
 export type EventInput = z.infer<typeof eventSchema>;
-export type SiteEvent = EventInput & { id: number; createdAt: string; updatedAt: string };
+export type SiteEvent = EventInput & {
+  id: number;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export const seoSchema = z.object({
   title: text(1, 200, "عنوان SEO"),
@@ -236,7 +281,10 @@ export const contentSchema = z.object({
     slides: z.array(heroSlideSchema).min(1).max(12),
   }),
   copy: copySchema,
-  categories: z.array(text(1, 60, "التصنيف")).min(1).max(30),
+  categories: z
+    .array(text(1, 60, "التصنيف"))
+    .min(1)
+    .max(30),
   products: z.array(productSchema).max(200),
   whyUs: z.array(whyUsItemSchema).max(12),
   stats: z.array(statSchema).max(12),
@@ -244,7 +292,10 @@ export const contentSchema = z.object({
   reviews: z.array(reviewSchema).max(60),
   faqs: z.array(faqSchema).max(60),
   sectionNames: z.array(text(1, 60, "اسم القسم")).length(8),
-  units: z.array(text(1, 40, "الوحدة")).min(1).max(12),
+  units: z
+    .array(text(1, 40, "الوحدة"))
+    .min(1)
+    .max(12),
   contentStatus: contentStatusSchema,
   seo: seoSchema,
 });
@@ -270,17 +321,23 @@ export const isNewBadgeActive = (
 };
 
 /** Human label for the stock state, or null when there is nothing to announce. */
-export const stockLabel = (product: Pick<Product, "availability" | "quantity">) => {
-  if (product.availability === "coming_soon") return AVAILABILITY_LABELS.coming_soon;
-  if (product.availability === "made_to_order") return AVAILABILITY_LABELS.made_to_order;
+export const stockLabel = (
+  product: Pick<Product, "availability" | "quantity">,
+) => {
+  if (product.availability === "coming_soon")
+    return AVAILABILITY_LABELS.coming_soon;
+  if (product.availability === "made_to_order")
+    return AVAILABILITY_LABELS.made_to_order;
   if (product.quantity === 0) return "نفدت الكمية";
-  if (product.availability === "unlimited") return AVAILABILITY_LABELS.unlimited;
+  if (product.availability === "unlimited")
+    return AVAILABILITY_LABELS.unlimited;
   return null;
 };
 
 /** Products that cannot be ordered right now. */
-export const isOrderable = (product: Pick<Product, "availability" | "quantity">) =>
-  product.availability !== "coming_soon" && product.quantity !== 0;
+export const isOrderable = (
+  product: Pick<Product, "availability" | "quantity">,
+) => product.availability !== "coming_soon" && product.quantity !== 0;
 export type ContentDoc = Content & { revision: number };
 export type Product = z.infer<typeof productSchema>;
 export type HeroSlide = z.infer<typeof heroSlideSchema>;
@@ -318,7 +375,12 @@ export const DEFAULT_CONTENT: Content = contentSchema.parse({
   faqs: plain(FAQS),
   sectionNames: plain(SECTION_NAMES),
   units: plain(WHOLESALE_UNITS),
-  contentStatus: { ...CONTENT_STATUS, reviewsArePlaceholders: true, galleryArePlaceholders: true, addressIsPlaceholder: true },
+  contentStatus: {
+    ...CONTENT_STATUS,
+    reviewsArePlaceholders: true,
+    galleryArePlaceholders: true,
+    addressIsPlaceholder: true,
+  },
   seo: { title: SEO_TITLE, description: SEO_DESCRIPTION },
 });
 
@@ -326,7 +388,12 @@ export const DEFAULT_CONTENT: Content = contentSchema.parse({
 // Wholesale requests
 // ---------------------------------------------------------------------------
 
-export const REQUEST_STATUSES = ["new", "contacted", "confirmed", "archived"] as const;
+export const REQUEST_STATUSES = [
+  "new",
+  "contacted",
+  "confirmed",
+  "archived",
+] as const;
 export type RequestStatus = (typeof REQUEST_STATUSES)[number];
 export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
   new: "جديد",
@@ -342,7 +409,9 @@ const contactNumber = z
   .min(6, { message: "رقم تواصل قصير جدًا" })
   .max(32, { message: "رقم تواصل طويل جدًا" })
   .refine((v) => /^[+()\-\s0-9]+$/.test(v), { message: "رقم تواصل غير صالح" })
-  .refine((v) => (v.match(/[0-9]/g) ?? []).length >= 6, { message: "رقم تواصل غير صالح" });
+  .refine((v) => (v.match(/[0-9]/g) ?? []).length >= 6, {
+    message: "رقم تواصل غير صالح",
+  });
 
 export const wholesaleRequestSchema = z.object({
   name: text(2, 120, "الاسم"),
@@ -355,9 +424,15 @@ export const wholesaleRequestSchema = z.object({
     .refine((v) => v > 0, { message: "الكمية يجب أن تكون أكبر من صفر" })
     .refine((v) => v <= 100000, { message: "الكمية كبيرة جدًا" }),
   notes: z.string().trim().max(1000).default(""),
-  consent: z.literal(true, { errorMap: () => ({ message: "يجب الموافقة على تخزين البيانات" }) }),
+  consent: z.literal(true, {
+    errorMap: () => ({ message: "يجب الموافقة على تخزين البيانات" }),
+  }),
   // Bots fill hidden fields; humans never see them.
-  honeypot: z.string().max(0, { message: "تم رفض الطلب" }).optional().default(""),
+  honeypot: z
+    .string()
+    .max(0, { message: "تم رفض الطلب" })
+    .optional()
+    .default(""),
   requestKey: z
     .string()
     .trim()
@@ -389,7 +464,9 @@ export const credentialsSchema = z.object({
     .trim()
     .min(3, { message: "اسم المستخدم قصير جدًا" })
     .max(60, { message: "اسم المستخدم طويل جدًا" })
-    .regex(/^[A-Za-z0-9._@-]+$/, { message: "اسم المستخدم يحتوي على رموز غير مسموحة" }),
+    .regex(/^[A-Za-z0-9._@-]+$/, {
+      message: "اسم المستخدم يحتوي على رموز غير مسموحة",
+    }),
   password: z
     .string()
     .min(12, { message: "كلمة المرور يجب ألا تقل عن 12 حرفًا" })
@@ -407,7 +484,9 @@ export const emailSchema = z
   .string()
   .trim()
   .max(160)
-  .refine((v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), { message: "بريد إلكتروني غير صالح" });
+  .refine((v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), {
+    message: "بريد إلكتروني غير صالح",
+  });
 
 const displayName = z
   .string()
@@ -429,7 +508,11 @@ const answer = z
 
 /** Login accepts either the username or the account email. */
 export const loginSchema = z.object({
-  identifier: z.string().trim().min(1, { message: "من فضلك أدخل اسم المستخدم أو البريد" }).max(160),
+  identifier: z
+    .string()
+    .trim()
+    .min(1, { message: "من فضلك أدخل اسم المستخدم أو البريد" })
+    .max(160),
   password: z.string().min(1, { message: "من فضلك أدخل كلمة المرور" }).max(200),
 });
 
@@ -452,11 +535,14 @@ export const completeProfileSchema = z.object({
 export const profileUpdateSchema = z.object({
   displayName,
   email: emailSchema,
-  avatarUrl: safeUrl("رابط الصورة"),
+  avatarUrl: safeImageUrl("رابط الصورة"),
 });
 
 export const passwordChangeSchema = z.object({
-  currentPassword: z.string().min(1, { message: "أدخل كلمة المرور الحالية" }).max(200),
+  currentPassword: z
+    .string()
+    .min(1, { message: "أدخل كلمة المرور الحالية" })
+    .max(200),
   newPassword: z
     .string()
     .min(12, { message: "كلمة المرور يجب ألا تقل عن 12 حرفًا" })
@@ -490,13 +576,15 @@ export const adminUpdateSchema = z.object({
   username: credentialsSchema.shape.username,
   displayName,
   email: emailSchema,
-  avatarUrl: safeUrl("رابط الصورة"),
+  avatarUrl: safeImageUrl("رابط الصورة"),
   role: z.enum(ROLES),
   // Empty string keeps the existing password.
   password: z
     .string()
     .max(200)
-    .refine((v) => v === "" || v.length >= 12, { message: "كلمة المرور يجب ألا تقل عن 12 حرفًا" })
+    .refine((v) => v === "" || v.length >= 12, {
+      message: "كلمة المرور يجب ألا تقل عن 12 حرفًا",
+    })
     .default(""),
 });
 

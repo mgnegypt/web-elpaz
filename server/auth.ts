@@ -16,10 +16,19 @@ export const PENDING_TTL_MS = 10 * 60 * 1000;
 /** Salted scrypt; the plaintext password is never stored or logged. */
 export function hashSecret(secret: string): string {
   const salt = randomBytes(16);
-  const key = scryptSync(secret, salt, KEY_LEN, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
-  return ["scrypt", SCRYPT_N, SCRYPT_R, SCRYPT_P, salt.toString("base64"), key.toString("base64")].join(
-    "$",
-  );
+  const key = scryptSync(secret, salt, KEY_LEN, {
+    N: SCRYPT_N,
+    r: SCRYPT_R,
+    p: SCRYPT_P,
+  });
+  return [
+    "scrypt",
+    SCRYPT_N,
+    SCRYPT_R,
+    SCRYPT_P,
+    salt.toString("base64"),
+    key.toString("base64"),
+  ].join("$");
 }
 
 export function verifySecret(secret: string, stored: string): boolean {
@@ -42,10 +51,20 @@ export function verifySecret(secret: string, stored: string): boolean {
 }
 
 /** Answers are compared case- and whitespace-insensitively, then hashed like a password. */
-export const normalizeAnswer = (answer: string) => answer.trim().toLowerCase().replace(/\s+/g, " ");
+export const normalizeAnswer = (answer: string) =>
+  answer.trim().toLowerCase().replace(/\s+/g, " ");
 
 export const hashPassword = hashSecret;
 export const verifyPassword = verifySecret;
+
+/**
+ * A real scrypt hash used when the identifier does not exist, so a missing
+ * account and a wrong password cost exactly the same time. Computed once: the
+ * login path should not pay for a fresh hash per failed attempt.
+ */
+let dummy: string | null = null;
+export const dummyPasswordHash = () =>
+  (dummy ??= hashSecret("dummy-comparison-value"));
 
 /** Constant-time string compare for setup and CSRF tokens. */
 export function safeEqual(a: string, b: string): boolean {
@@ -69,7 +88,12 @@ export type SessionRow = {
 export function createSession(
   db: Db,
   adminId: number,
-  options: { securityVerified: boolean; ip?: string; userAgent?: string; ttlMs?: number },
+  options: {
+    securityVerified: boolean;
+    ip?: string;
+    userAgent?: string;
+    ttlMs?: number;
+  },
 ) {
   const token = randomBytes(32).toString("base64url");
   const csrf = randomBytes(32).toString("base64url");
@@ -95,7 +119,10 @@ export function createSession(
 }
 
 /** Returns the session only if it exists, is unrevoked, and has not expired. */
-export function readSession(db: Db, token: string | undefined): SessionRow | null {
+export function readSession(
+  db: Db,
+  token: string | undefined,
+): SessionRow | null {
   if (!token) return null;
   const row = db.raw
     .prepare(
@@ -113,7 +140,9 @@ export function readSession(db: Db, token: string | undefined): SessionRow | nul
 
 export function markSecurityVerified(db: Db, token: string) {
   db.raw
-    .prepare("UPDATE sessions SET security_verified = 1, expires_at = ? WHERE token = ?")
+    .prepare(
+      "UPDATE sessions SET security_verified = 1, expires_at = ? WHERE token = ?",
+    )
     .run(new Date(Date.now() + SESSION_TTL_MS).toISOString(), token);
 }
 
@@ -122,14 +151,22 @@ export function revokeSession(db: Db, token: string) {
 }
 
 /** Used after a credential change so old sessions cannot outlive it. */
-export function revokeAllSessions(db: Db, adminId: number, exceptToken?: string) {
+export function revokeAllSessions(
+  db: Db,
+  adminId: number,
+  exceptToken?: string,
+) {
   if (exceptToken) {
     db.raw
-      .prepare("UPDATE sessions SET revoked = 1 WHERE admin_id = ? AND token <> ?")
+      .prepare(
+        "UPDATE sessions SET revoked = 1 WHERE admin_id = ? AND token <> ?",
+      )
       .run(adminId, exceptToken);
     return;
   }
-  db.raw.prepare("UPDATE sessions SET revoked = 1 WHERE admin_id = ?").run(adminId);
+  db.raw
+    .prepare("UPDATE sessions SET revoked = 1 WHERE admin_id = ?")
+    .run(adminId);
 }
 
 export function purgeExpiredSessions(db: Db) {
@@ -139,4 +176,5 @@ export function purgeExpiredSessions(db: Db) {
 }
 
 export const isOwner = (role: string): boolean => role === "owner";
-export const asRole = (role: string): Role => (role === "owner" ? "owner" : "admin");
+export const asRole = (role: string): Role =>
+  role === "owner" ? "owner" : "admin";
