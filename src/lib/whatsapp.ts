@@ -1,8 +1,8 @@
-import { WA_NUMBER } from "../data";
-export const waLink = (text?: string) =>
-  `https://wa.me/${WA_NUMBER}${text ? `?text=${encodeURIComponent(text)}` : ""}`;
-export const orderMessage = (name: string) =>
-  "السلام عليكم، عايز أطلب: " + name;
+export const waLink = (number: string, text?: string) =>
+  `https://wa.me/${number}${text ? `?text=${encodeURIComponent(text)}` : ""}`;
+
+export const orderMessage = (name: string) => "السلام عليكم، عايز أطلب: " + name;
+
 export function wholesaleMessage(
   name: string,
   quantity: string,

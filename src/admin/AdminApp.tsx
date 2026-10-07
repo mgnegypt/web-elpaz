@@ -1,0 +1,413 @@
+// Dashboard shell: bootstrap → auth → application chrome (sidebar + header).
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ContentDoc } from "../../shared/content.ts";
+import {
+  ApiFailure,
+  adminApi,
+  setCsrfToken,
+  subscribeLive,
+  type AdminSession,
+} from "./api";
+import { Icons } from "./icons";
+import { Skeleton } from "./ui";
+import { ToastProvider, useToast } from "./ui";
+import AuthScreen from "./AuthScreen";
+import OverviewPanel from "./OverviewPanel";
+import ProductsPanel from "./ProductsPanel";
+import ContentPanel from "./ContentPanel";
+import EventsPanel from "./EventsPanel";
+import RequestsPanel from "./RequestsPanel";
+import AdminsPanel from "./AdminsPanel";
+import AuditPanel from "./AuditPanel";
+import ProfilePanel from "./ProfilePanel";
+import ThemeToggle from "../components/ThemeToggle";
+
+type Stage = "boot" | "auth" | "app";
+type AuthStart = {
+  phase: "setup" | "login" | "complete" | "security";
+  question?: string;
+};
+
+const NAV = [
+  { key: "overview", label: "نظرة عامة", icon: "dashboard" },
+  { key: "products", label: "المنتجات", icon: "package" },
+  { key: "events", label: "المناسبات", icon: "events" },
+  { key: "content", label: "محتوى الموقع", icon: "palette" },
+  { key: "requests", label: "طلبات الجملة", icon: "truck" },
+] as const;
+
+const OWNER_NAV = [
+  { key: "admins", label: "حسابات المشرفين", icon: "users" },
+  { key: "audit", label: "سجل النشاط", icon: "activity" },
+] as const;
+
+function Dashboard() {
+  const toast = useToast();
+  const [session, setSession] = useState<AdminSession | null>(null);
+  const [content, setContent] = useState<ContentDoc | null>(null);
+  const [tab, setTab] = useState<string>("overview");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [online, setOnline] = useState(false);
+  const [contentDirty, setContentDirty] = useState(false);
+  const [staleRevision, setStaleRevision] = useState<number | null>(null);
+  const dirtyRef = useRef(false);
+
+  const sessionRef = useRef<AdminSession | null>(null);
+  sessionRef.current = session;
+
+  const loadContent = useCallback(async () => {
+    setStaleRevision(null);
+    const document_ = await adminApi.content();
+    setContent(document_);
+    return document_;
+  }, []);
+
+  useEffect(() => {
+    dirtyRef.current = contentDirty;
+  }, [contentDirty]);
+
+  const [stage, setStage] = useState<Stage>("boot");
+  const [start, setStart] = useState<AuthStart>({ phase: "login" });
+
+  /** Reads the setup status, retrying transient failures (e.g. a cold API). */
+  const readStatus = async (attempts: number) => {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await adminApi.status();
+      } catch {
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, 600 * (attempt + 1)),
+        );
+      }
+    }
+    return null;
+  };
+
+  /* ------------------------------------------------------------- bootstrap */
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const current = await adminApi.session();
+        if (!live) return;
+        if (!current.authenticated) {
+          // The security question is still pending on this session.
+          setCsrfToken(current.csrf);
+          setStart({ phase: "security", question: current.question });
+          setStage("auth");
+          return;
+        }
+        setCsrfToken(current.csrf);
+        setSession(current);
+        await loadContent();
+        if (live) setStage("app");
+      } catch (failure) {
+        if (!live) return;
+        // A 401 is the normal "not signed in yet" answer; anything else may just
+        // be the API still waking up, so retry before assuming anything.
+        const unauthorised =
+          failure instanceof ApiFailure && failure.status === 401;
+        const status = await readStatus(unauthorised ? 2 : 5);
+        if (!live) return;
+        // Resolve the phase first, then mount the auth screen: it must never
+        // appear as the login form when the site actually needs first-run setup.
+        setStart({ phase: status?.needsSetup ? "setup" : "login" });
+        setStage("auth");
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [loadContent]);
+
+  /* ------------------------------------------------------------ live feed */
+  useEffect(() => {
+    if (stage !== "app") return;
+    const stop = subscribeLive((type) => {
+      if (type === "events") return;
+      if (dirtyRef.current) {
+        setStaleRevision((current) => current ?? -1);
+        return;
+      }
+      void adminApi
+        .content()
+        .then((document_) => {
+          setContent(document_);
+          if (type === "content")
+            toast.push("info", "تم تحديث المحتوى من مصدر آخر.");
+        })
+        .catch(() => undefined);
+    }, setOnline);
+    return stop;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage]);
+
+  const logout = useCallback(async () => {
+    try {
+      await adminApi.logout();
+    } catch {
+      /* the cookie is cleared server-side either way */
+    }
+    setCsrfToken("");
+    setSession(null);
+    setContent(null);
+    setProfileOpen(false);
+    setStage("auth");
+    setStart({ phase: "login" });
+    toast.push("info", "تم تسجيل الخروج.");
+  }, [toast]);
+
+  const goTo = (next: string) => {
+    setMenuOpen(false);
+    if (next === "profile") {
+      setProfileOpen(true);
+      return;
+    }
+    setTab(next);
+  };
+
+  /** A 401 anywhere means the session died: return to the login screen. */
+  const guard = useCallback(
+    (failure: unknown) => {
+      if (failure instanceof ApiFailure && failure.status === 401)
+        void logout();
+      return failure;
+    },
+    [logout],
+  );
+
+  const navItems = useMemo(() => {
+    const items = [...NAV] as {
+      key: string;
+      label: string;
+      icon: keyof typeof Icons;
+    }[];
+    if (session?.capabilities.manageAdmins)
+      items.push(...(OWNER_NAV as unknown as typeof items));
+    return items;
+  }, [session?.capabilities.manageAdmins]);
+
+  if (stage === "boot") {
+    return (
+      <div className="admin-boot">
+        <div className="boot-brand">
+          <span className="boot-mark">
+            <Icons.brand size={24} />
+          </span>
+          <div>
+            <strong>البان إلباظ</strong>
+            <span>لوحة التحكم</span>
+          </div>
+        </div>
+        <div className="boot-cards">
+          {[0, 1, 2].map((index) => (
+            <div className="glass-card skeleton-card" key={index}>
+              <Skeleton width="45%" height={16} />
+              <Skeleton width="85%" height={12} />
+              <Skeleton width="65%" height={12} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (stage === "auth" || !session || !content) {
+    return (
+      <AuthScreen
+        initialPhase={start.phase}
+        initialQuestion={start.question}
+        onSuccess={async (next) => {
+          setSession(next);
+          try {
+            await loadContent();
+          } catch (failure) {
+            guard(failure);
+          }
+          setStage("app");
+        }}
+      />
+    );
+  }
+
+  const activeLabel =
+    [...NAV, ...OWNER_NAV].find((item) => item.key === tab)?.label ?? "";
+
+  return (
+    <div className="admin-shell">
+      <aside className={`sidebar${menuOpen ? " sidebar--open" : ""}`}>
+        <div className="sidebar-brand">
+          <span className="sidebar-mark">
+            <Icons.brand size={22} />
+          </span>
+          <div>
+            <strong>البان إلباظ</strong>
+            <span>لوحة التحكم</span>
+          </div>
+        </div>
+        <nav className="sidebar-nav" aria-label="أقسام اللوحة">
+          {navItems.map((item) => {
+            const Icon = Icons[item.icon];
+            return (
+              <button
+                key={item.key}
+                className={`nav-item${tab === item.key ? " nav-item--active" : ""}`}
+                onClick={() => goTo(item.key)}
+                aria-current={tab === item.key ? "page" : undefined}
+              >
+                <Icon size={19} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+        <div className="sidebar-foot">
+          <button className="nav-item" onClick={() => setProfileOpen(true)}>
+            <Icons.user size={19} />
+            <span>الملف الشخصي</span>
+          </button>
+          <button
+            className="nav-item nav-item--danger"
+            onClick={() => void logout()}
+          >
+            <Icons.logout size={19} />
+            <span>تسجيل الخروج</span>
+          </button>
+          <p className="sidebar-note">
+            <Icons.shield size={13} />
+            {session.role === "owner" ? "صلاحية المالك" : "صلاحية مشرف"}
+          </p>
+        </div>
+      </aside>
+
+      {menuOpen && (
+        <div className="sidebar-scrim" onClick={() => setMenuOpen(false)} />
+      )}
+
+      <div className="admin-body">
+        <header className="topbar">
+          <button
+            className="icon-btn icon-btn--ghost topbar-menu"
+            onClick={() => setMenuOpen((open) => !open)}
+            aria-label="فتح القائمة"
+            aria-expanded={menuOpen}
+          >
+            <Icons.menu size={20} />
+          </button>
+          <div className="topbar-title">
+            {/* The panel below renders the page <h1>; this is only a locator hint. */}
+            <span className="topbar-label">{activeLabel}</span>
+            <span className={`live-chip${online ? " live-chip--on" : ""}`}>
+              {online ? (
+                <Icons.online size={13} />
+              ) : (
+                <Icons.offline size={13} />
+              )}
+              {online ? "تحديث فوري" : "غير متصل"}
+            </span>
+          </div>
+          <div className="topbar-actions">
+            {staleRevision !== null && (
+              <button
+                className="stale-chip"
+                onClick={() => {
+                  void adminApi.content().then((document_) => {
+                    setContent(document_);
+                    setStaleRevision(null);
+                  });
+                }}
+              >
+                <Icons.refresh size={14} />
+                نسخة أحدث على السيرفر — تحديث
+              </button>
+            )}
+            <ThemeToggle />
+            <button
+              className="profile-chip"
+              onClick={() => setProfileOpen(true)}
+            >
+              {session.avatarUrl ? (
+                <img src={session.avatarUrl} alt="" />
+              ) : (
+                <span className="avatar-fallback avatar-fallback--sm">
+                  {session.displayName.trim().charAt(0) || "؟"}
+                </span>
+              )}
+              <span className="profile-chip-text">
+                <strong>{session.displayName}</strong>
+                <small>{session.role === "owner" ? "مالك" : "مشرف"}</small>
+              </span>
+            </button>
+          </div>
+        </header>
+
+        <main className="admin-main">
+          {tab === "overview" && (
+            <OverviewPanel
+              session={session}
+              content={content}
+              online={online}
+              onNavigate={goTo}
+            />
+          )}
+          {tab === "products" && (
+            <ProductsPanel
+              content={content}
+              onContent={setContent}
+              categories={content.categories}
+            />
+          )}
+          {tab === "events" && <EventsPanel />}
+          {tab === "content" && (
+            <ContentPanel
+              content={content}
+              onContent={setContent}
+              onDirtyChange={setContentDirty}
+            />
+          )}
+          {tab === "requests" && <RequestsPanel />}
+          {tab === "admins" && session.capabilities.manageAdmins && (
+            <AdminsPanel selfId={session.id} />
+          )}
+          {tab === "admins" && !session.capabilities.manageAdmins && (
+            <div className="card">
+              <p className="confirm-text">هذه الصفحة متاحة للمالك فقط.</p>
+            </div>
+          )}
+          {tab === "audit" && session.capabilities.manageAdmins && (
+            <AuditPanel />
+          )}
+        </main>
+      </div>
+
+      {profileOpen && (
+        <ProfilePanel
+          onClose={() => setProfileOpen(false)}
+          onLogout={() => void logout()}
+          onProfileChange={(profile) =>
+            setSession((current) =>
+              current
+                ? {
+                    ...current,
+                    displayName: profile.displayName,
+                    email: profile.email,
+                    avatarUrl: profile.avatarUrl,
+                    hasSecurityQuestion: profile.hasSecurityQuestion,
+                  }
+                : current,
+            )
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+export default function AdminApp() {
+  return (
+    <ToastProvider>
+      <Dashboard />
+    </ToastProvider>
+  );
+}

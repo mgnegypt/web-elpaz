@@ -4,3 +4,17 @@ dist/
 *.tsbuildinfo
 .playwright/
 test-results/
+
+# Private runtime data — never commit.
+.env
+.env.*
+!.env.example
+.data/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+setup-token

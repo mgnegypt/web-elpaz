@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, Leaf, Sparkles } from "lucide-react";
-import { COPY, IMAGES } from "../data";
+import { useContent } from "../content/ContentContext";
 import { ProductImage } from "./shared";
 export default function Hero({
   active,
@@ -11,6 +11,9 @@ export default function Hero({
   goTo: (n: number) => void;
   blocked: boolean;
 }) {
+  const { hero } = useContent();
+  const slides = hero.slides;
+  const count = slides.length;
   const [index, setIndex] = useState(0),
     [animating, setAnimating] = useState(false);
   const lock = useRef(false),
@@ -21,15 +24,18 @@ export default function Hero({
       if (lock.current || blocked) return;
       lock.current = true;
       setAnimating(true);
-      setIndex((i) => (i + (direction === "next" ? 1 : 3)) % 4);
+      setIndex((i) => (i + (direction === "next" ? 1 : count - 1)) % count);
       timer.current = setTimeout(() => {
         lock.current = false;
         setAnimating(false);
       }, 650);
     },
-    [blocked],
+    [blocked, count],
   );
   useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => {
+    setIndex((i) => (i < count ? i : 0));
+  }, [count]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (
@@ -51,7 +57,8 @@ export default function Hero({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [active, blocked, navigate]);
-  const current = IMAGES[index];
+  const current = slides[index] ?? slides[0];
+  if (!current) return null;
   return (
     <div
       className={`hero ${animating ? "is-animating" : ""}`}
@@ -67,7 +74,7 @@ export default function Hero({
       <div className="hero-topline">
         <span>
           <i />
-          {COPY.heroEyebrow}
+          {hero.eyebrow}
         </span>
         <span dir="ltr">ELBAZ · NATURAL GOODNESS</span>
       </div>
@@ -85,7 +92,7 @@ export default function Hero({
       <div className="hero-side-note">
         <span>الأصل في الطعم</span>
         <span className="note-line" />
-        <small>{COPY.heroTagline}</small>
+        <small>{hero.tagline}</small>
       </div>
       <div
         className="hero-carousel"
@@ -109,17 +116,17 @@ export default function Hero({
           pointer.current = null;
         }}
       >
-        {IMAGES.map((item, i) => {
+        {slides.map((item, i) => {
           const role =
             i === index
               ? "center"
-              : i === (index + 3) % 4
+              : i === (index + count - 1) % count
                 ? "left"
-                : i === (index + 1) % 4
+                : i === (index + 1) % count
                   ? "right"
                   : "back";
           return (
-            <div className={`hero-product role-${role}`} key={item.src}>
+            <div className={`hero-product role-${role}`} key={`${item.src}-${i}`}>
               <ProductImage
                 src={item.src}
                 webp={item.webp}
@@ -155,7 +162,7 @@ export default function Hero({
           </button>
           <span className="carousel-position">
             <b>0{index + 1}</b>
-            <span>/ 04</span>
+            <span>/ 0{count}</span>
           </span>
         </div>
       </div>
@@ -171,9 +178,9 @@ export default function Hero({
         </span>
       </button>
       <div className="hero-bottom">
-        <span>{COPY.heroSeal}</span>
+        <span>{hero.seal}</span>
         <div className="hero-pagination" dir="ltr">
-          {IMAGES.map((item, i) => (
+          {slides.map((item, i) => (
             <button
               key={i}
               aria-label={`عرض ${item.name}`}

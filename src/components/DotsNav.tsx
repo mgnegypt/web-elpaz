@@ -1,14 +1,17 @@
-import { SECTION_NAMES } from "../data";
+import { useContent } from "../content/ContentContext";
 export default function DotsNav({
   section,
   goTo,
+  blocked = false,
 }: {
   section: number;
   goTo: (n: number) => void;
+  blocked?: boolean;
 }) {
+  const { sectionNames } = useContent();
   return (
-    <nav className="dots-nav" aria-label="أقسام الموقع">
-      {SECTION_NAMES.map((name, i) => (
+    <nav className="dots-nav" aria-label="أقسام الموقع" inert={blocked}>
+      {sectionNames.map((name, i) => (
         <button
           key={name}
           aria-label={name}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Camera, X } from "lucide-react";
-import { GALLERY } from "../data";
+import { useContent } from "../content/ContentContext";
 import { useDialog } from "../hooks/useDialog";
 export default function Lightbox({
   initial,
@@ -9,12 +9,14 @@ export default function Lightbox({
   initial: number;
   onClose: () => void;
 }) {
+  const { gallery } = useContent();
   const [index, setIndex] = useState(initial),
     ref = useDialog(onClose),
     start = useRef({ x: 0, y: 0 });
   const move = useCallback(
-    (d: number) => setIndex((i) => (i + d + GALLERY.length) % GALLERY.length),
-    [],
+    (d: number) =>
+      setIndex((i) => (i + d + gallery.length) % Math.max(1, gallery.length)),
+    [gallery.length],
   );
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -30,7 +32,8 @@ export default function Lightbox({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [move]);
-  const photo = GALLERY[index];
+  const photo = gallery[index] ?? gallery[0];
+  if (!photo) return null;
   return (
     <div
       className="lightbox"
@@ -90,7 +93,7 @@ export default function Lightbox({
         <div aria-live="polite">
           <h2>{photo.caption}</h2>
           <span dir="ltr">
-            {index + 1} / {GALLERY.length}
+            {index + 1} / {gallery.length}
           </span>
         </div>
         <button

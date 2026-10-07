@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Quote, Star, UserRound } from "lucide-react";
-import { CONTENT_STATUS, COPY, TESTIMONIALS } from "../data";
+import { useContent } from "../content/ContentContext";
 import { SectionTitle } from "./shared";
 import { useReducedMotion } from "../hooks/useReducedMotion";
 export default function Testimonials({ active }: { active: boolean }) {
+  const { reviews, copy, contentStatus } = useContent();
   const [index, setIndex] = useState(0),
     [paused, setPaused] = useState(false),
     start = useRef({ x: 0, y: 0 });
@@ -11,18 +12,19 @@ export default function Testimonials({ active }: { active: boolean }) {
   useEffect(() => {
     if (!active || paused || reduced) return;
     const id = setInterval(
-      () => setIndex((i) => (i + 1) % TESTIMONIALS.length),
+      () => setIndex((i) => (i + 1) % Math.max(1, reviews.length)),
       5000,
     );
     return () => clearInterval(id);
-  }, [active, paused, reduced]);
-  const item = TESTIMONIALS[index];
+  }, [active, paused, reduced, reviews.length]);
+  const item = reviews[index] ?? reviews[0];
+  if (!item) return null;
   return (
     <div className="section-container centered-section testimonials-container">
       <SectionTitle
         eyebrow="شركاء الحكاية"
         title="آراء عملائنا"
-        subtitle={COPY.testimonialSubtitle}
+        subtitle={copy.testimonialSubtitle}
       />
       <div
         className="quote-card"
@@ -41,8 +43,8 @@ export default function Testimonials({ active }: { active: boolean }) {
           if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy))
             setIndex(
               (i) =>
-                (i + (dx < 0 ? 1 : TESTIMONIALS.length - 1)) %
-                TESTIMONIALS.length,
+                (i + (dx < 0 ? 1 : reviews.length - 1)) %
+                Math.max(1, reviews.length),
             );
         }}
       >
@@ -70,14 +72,14 @@ export default function Testimonials({ active }: { active: boolean }) {
             </div>
           </div>
         </div>
-        {CONTENT_STATUS.testimonialsArePlaceholders && (
+        {contentStatus.testimonialsArePlaceholders && (
           <span className="review-placeholder">
             رأي توضيحي — في انتظار آراء عملائنا الحقيقية
           </span>
         )}
       </div>
       <div className="review-dots">
-        {TESTIMONIALS.map((_, i) => (
+        {reviews.map((_, i) => (
           <button
             key={i}
             className={index === i ? "active" : ""}

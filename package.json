@@ -4,22 +4,41 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "node server/index.ts",
+    "dev:web": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
+    "start": "node server/index.ts",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node scripts/test.mjs site",
+    "test:api": "node scripts/test.mjs api",
+    "test:admin": "node scripts/test.mjs admin",
+    "test:all": "node scripts/test.mjs all",
+    "test:capture": "node tests/capture.mjs",
+    "test:security": "node scripts/test.mjs security",
+    "test:layout": "node scripts/test.mjs layout"
   },
   "dependencies": {
     "@fontsource/cairo": "^5.3.0",
     "@fontsource/lalezar": "^5.3.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.22.3",
+    "express-rate-limit": "^7.5.1",
+    "helmet": "^8.3.0",
     "lucide-react": "^0.468.0",
+    "multer": "^1.4.5-lts.1",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@sparticuz/chromium": "^153.0.0",
     "@tailwindcss/vite": "^4.1.0",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^4.17.25",
+    "@types/multer": "^1.4.13",
+    "@types/node": "^22.20.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.4.1",
@@ -28,5 +47,8 @@
     "tailwindcss": "^4.1.0",
     "typescript": "~5.7.2",
     "vite": "^6.1.0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

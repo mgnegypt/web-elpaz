@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { LOGO_URL, SITE } from "../data";
+import { useContent } from "../content/ContentContext";
 export function BrandLogo({ large = false }: { large?: boolean }) {
-  return LOGO_URL ? (
+  const { site } = useContent();
+  return site.logoUrl ? (
     <img
-      src={LOGO_URL}
-      alt={SITE.name}
+      src={site.logoUrl}
+      alt={site.name}
       width={large ? 200 : 52}
       height={large ? 200 : 52}
       loading="lazy"

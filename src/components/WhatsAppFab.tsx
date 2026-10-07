@@ -1,10 +1,12 @@
+import { useContent } from "../content/ContentContext";
 import { waLink } from "../lib/whatsapp";
 import { WhatsAppIcon } from "./shared";
 export default function WhatsAppFab() {
+  const { site } = useContent();
   return (
     <a
       className="whatsapp-fab"
-      href={waLink("السلام عليكم، عايز أستفسر عن منتجاتكم")}
+      href={waLink(site.whatsapp, "السلام عليكم، عايز أستفسر عن منتجاتكم")}
       target="_blank"
       rel="noopener noreferrer"
       aria-label="تواصل عبر واتساب"

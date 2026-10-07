@@ -2,9 +2,11 @@ import { ArrowUp } from "lucide-react";
 export default function ProgressTop({
   section,
   onClick,
+  blocked = false,
 }: {
   section: number;
   onClick: () => void;
+  blocked?: boolean;
 }) {
   if (!section) return null;
   return (
@@ -12,22 +14,16 @@ export default function ProgressTop({
       className="progress-top"
       aria-label="العودة للأعلى"
       onClick={onClick}
+      inert={blocked}
     >
       <svg viewBox="0 0 56 56" aria-hidden="true">
+        <circle className="progress-disc" cx="28" cy="28" r="25" strokeWidth="2" />
         <circle
-          cx="28"
-          cy="28"
-          r="25"
-          fill="#1E3FA8"
-          stroke="#4766C8"
-          strokeWidth="2"
-        />
-        <circle
+          className="progress-arc"
           cx="28"
           cy="28"
           r="25"
           fill="none"
-          stroke="white"
           strokeWidth="2"
           strokeDasharray={`${(section / 7) * 157.08} 157.08`}
           transform="rotate(-90 28 28)"
