@@ -174,20 +174,22 @@ export const PRODUCTS = [
   },
 ];
 export type Product = (typeof PRODUCTS)[number];
+// `icon` is a semantic key from src/lib/contentIcons.tsx — the dashboard shows a
+// visual picker with Arabic labels and never exposes icon component names.
 export const WHY_US = [
   {
-    icon: "Leaf",
+    icon: "leaf",
     title: "مواد طبيعية",
     text: "خامات طبيعية مختارة من مزارعنا.",
   },
   {
-    icon: "ShieldCheck",
+    icon: "quality",
     title: "جودة مضمونة",
     text: "تصنيع وتعبئة بأعلى معايير الجودة.",
   },
-  { icon: "Truck", title: "توصيل سريع", text: "نوصّل طلبك في أسرع وقت." },
+  { icon: "delivery", title: "توصيل سريع", text: "نوصّل طلبك في أسرع وقت." },
   {
-    icon: "BadgePercent",
+    icon: "price",
     title: "أسعار جملة",
     text: "أسعار تنافسية للكميات الكبيرة.",
   },

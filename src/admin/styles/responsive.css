@@ -1,0 +1,663 @@
+/* ===========================================================================
+   responsive.css — one place for every breakpoint and input-capability rule.
+
+   Three layout modes share the same markup:
+     desktop  ≥1025px  permanent sidebar + multi-column grids
+     tablet    ≤1024px  off-canvas sidebar opened from the top bar
+     phone      ≤720px  stacked layouts, tables become cards, sheets at ≤560px
+
+   Capability queries matter as much as width: a phone asking for the
+   "desktop site" reports a wide-ish viewport with a coarse pointer, so the
+   hit areas grow from `pointer: coarse`, not from the width alone.
+   =========================================================================== */
+
+/* ----------------------------------------------------- large desktop trim */
+
+@media (max-width: 1360px) {
+  .admin-shell .admin-main {
+    padding: var(--sp-5);
+  }
+}
+
+@media (max-width: 1180px) {
+  .dash .ui-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dash .ui-grid--3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ============================================ tablet: off-canvas sidebar */
+
+@media (max-width: 1024px) {
+  .admin-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-shell .sidebar {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 60;
+    width: min(86%, 310px);
+    height: 100vh;
+    height: 100dvh;
+    /* Closed: pushed past the inline-start edge and taken out of the
+       accessibility and hit-testing tree entirely. */
+    transform: translateX(100%);
+    visibility: hidden;
+    box-shadow: none;
+    transition:
+      transform var(--dur-3) var(--ease),
+      visibility var(--dur-3) var(--ease);
+  }
+  .admin-shell .sidebar--open {
+    transform: none;
+    visibility: visible;
+    box-shadow: var(--dash-shadow-lg);
+  }
+
+  /* The rail only makes sense next to the content, never over it. */
+  .admin-shell[data-rail="true"] {
+    --sidebar-w: 264px;
+  }
+  .admin-shell .sidebar-rail-toggle {
+    display: none;
+  }
+  .admin-shell .sidebar-close,
+  .admin-shell .topbar-menu {
+    display: inline-grid;
+  }
+
+  .admin-shell .admin-main {
+    padding: var(--sp-4);
+    gap: var(--sp-4);
+  }
+  .admin-shell .topbar {
+    padding-inline: var(--sp-4);
+  }
+}
+
+/* LTR safety net: the closed sidebar must leave on the correct side. */
+@media (max-width: 1024px) {
+  [dir="ltr"] .admin-shell .sidebar {
+    transform: translateX(-100%);
+  }
+  [dir="ltr"] .admin-shell .sidebar--open {
+    transform: none;
+  }
+}
+
+/* ===================================================== small tablet trims */
+
+@media (max-width: 900px) {
+  .dash .ui-grid--2,
+  .dash .ui-grid--3,
+  .dash .ui-grid--4 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash .welcome-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-4);
+  }
+  .dash .welcome-side {
+    align-items: flex-start;
+  }
+  .dash .welcome-flags {
+    justify-content: flex-start;
+  }
+  .dash .auth-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash .auth-brand {
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--dash-line);
+    padding: var(--sp-4) var(--sp-4) var(--sp-3);
+  }
+  .dash .auth-points {
+    display: none; /* the form is the task; the pitch is not */
+  }
+  .dash .auth-brand-foot {
+    padding-block-start: 0;
+  }
+  .dash .auth-form-side {
+    padding: var(--sp-4);
+  }
+}
+
+/* ============================================= phone: stacked everything */
+
+@media (max-width: 720px) {
+  .admin-shell .admin-main {
+    padding: var(--sp-3);
+  }
+  .admin-shell .topbar {
+    padding-inline: var(--sp-3);
+    gap: var(--sp-2);
+  }
+  .admin-shell .profile-chip-text {
+    display: none;
+  }
+  .admin-shell .profile-chip {
+    padding: 4px;
+  }
+  .admin-shell .live-chip {
+    display: none;
+  }
+  .admin-shell .topbar-label {
+    font-size: var(--fs-md);
+  }
+
+  .dash .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dash .page-actions {
+    width: 100%;
+  }
+  .dash .page-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .dash .page-title {
+    font-size: var(--fs-xl);
+  }
+
+  .dash .card-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-2);
+  }
+  .dash .card-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .dash .card-body {
+    padding: var(--sp-3);
+  }
+
+  .dash .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dash .toolbar > * {
+    width: 100%;
+  }
+  .dash .search-box {
+    max-width: none;
+  }
+
+  .dash .stat-row {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .dash .product-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+  }
+
+  /* Events: thumbnail + text, actions on their own wrapped row. */
+  .dash .event-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .dash .event-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    padding-block-start: var(--sp-2);
+    border-top: 1px solid var(--dash-line-soft);
+  }
+
+  .dash .audit-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .dash .audit-meta {
+    grid-column: 2;
+    align-items: flex-start;
+    flex-direction: row;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+  }
+
+  .dash .profile-identity {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .dash .session-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* -------- tables become cards: every cell keeps its own header text ---- */
+  .dash .table-wrap {
+    overflow: visible;
+    border: 0;
+    background: none;
+  }
+  .dash .data-table,
+  .dash .data-table tbody,
+  .dash .data-table tr,
+  .dash .data-table td {
+    display: block;
+    width: auto;
+  }
+  /* The desktop table keeps a 560px floor so columns stay readable inside the
+     scroller. In card mode there is no scroller, so the floor has to go or it
+     pushes the whole page sideways. */
+  .dash .data-table {
+    min-width: 0;
+  }
+  .dash .data-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .dash .data-table tr {
+    margin-block-end: var(--sp-3);
+    padding: var(--sp-3);
+    border: 1px solid var(--dash-line);
+    border-radius: var(--r-md);
+    background: var(--dash-surface);
+  }
+  .dash .data-table tr:last-child {
+    margin-block-end: 0;
+  }
+  .dash .data-table td {
+    display: grid;
+    grid-template-columns: minmax(84px, 34%) minmax(0, 1fr);
+    gap: var(--sp-2);
+    align-items: center;
+    padding: 5px 0;
+    border: 0;
+    min-height: 0;
+  }
+  .dash .data-table td::before {
+    content: attr(data-label);
+    color: var(--dash-muted);
+    font-size: var(--fs-xs);
+    font-weight: 700;
+  }
+  .dash .data-table td:last-child {
+    padding-block-start: var(--sp-2);
+    margin-block-start: var(--sp-1);
+    border-top: 1px solid var(--dash-line-soft);
+  }
+  .dash .data-table .row-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+/* ------------------------------------------- sheets instead of dialogs */
+
+@media (max-width: 560px) {
+  .dash.ui-modal-backdrop {
+    place-items: end stretch;
+    padding: 0;
+  }
+  .dash .ui-modal,
+  .dash .ui-modal--sm,
+  .dash .ui-modal--lg {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    border-bottom: 0;
+    animation-name: dash-sheet-in;
+  }
+  .dash .ui-modal-head,
+  .dash .ui-modal-body,
+  .dash .ui-modal-foot {
+    padding-inline: var(--sp-4);
+  }
+  .dash .ui-modal-foot {
+    flex-wrap: wrap;
+  }
+  .dash .ui-modal-foot .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .dash .drawer,
+  .dash .drawer--lg {
+    width: 100%;
+    border-inline-start: 0;
+  }
+  /* Phone widths: the label carries the meaning, so the decorative tab icon
+     steps aside and all tabs stay visible instead of hiding behind a scroll. */
+  .dash .tabs .tab > svg {
+    display: none;
+  }
+  .dash .tabs--line .tab {
+    padding-inline: 10px;
+  }
+  .dash .drawer-head,
+  .dash .drawer-body,
+  .dash .drawer-foot {
+    padding-inline: var(--sp-4);
+  }
+
+  .dash .save-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-2);
+  }
+  .dash .save-bar-actions {
+    justify-content: stretch;
+  }
+  .dash .save-bar-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
+/* ------------------------------------------------------- very small phones */
+
+@media (max-width: 430px) {
+  .admin-shell .admin-main {
+    padding: var(--sp-3) var(--sp-2);
+  }
+  .dash .welcome-card {
+    padding: var(--sp-4) var(--sp-3);
+  }
+  .dash .welcome-card h1 {
+    font-size: var(--fs-xl);
+  }
+  .dash .stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dash .product-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash .quick-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash .icon-picker {
+    grid-template-columns: repeat(auto-fill, minmax(98px, 1fr));
+  }
+  .dash .event-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash .event-thumb {
+    width: 100%;
+    height: 132px;
+  }
+  .dash .inline-row {
+    flex-wrap: wrap;
+  }
+  .dash .rating-row {
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+  }
+
+  /* Touch rules: 44px is the floor for anything tappable. */
+  .dash .btn,
+  .dash .input,
+  .dash .select,
+  .dash .textarea,
+  .dash .tab {
+    min-height: 44px;
+  }
+  .dash .btn--sm {
+    min-height: 40px;
+  }
+  .dash .icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .dash .icon-btn--sm {
+    width: 40px;
+    height: 40px;
+  }
+  .dash .switch {
+    width: 56px;
+    height: 32px;
+  }
+  .dash .switch-row {
+    min-height: 44px;
+  }
+  .dash .rating-star {
+    width: 44px;
+    height: 44px;
+  }
+  .dash .segmented-item {
+    min-height: 40px;
+  }
+}
+
+/* ------------------------------------------------- the narrowest phones */
+
+@media (max-width: 340px) {
+  .dash .stat-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash .segmented {
+    flex-wrap: wrap;
+  }
+  .dash .page-title {
+    font-size: var(--fs-lg);
+  }
+}
+
+/* ---------------------------------- short viewports (phone in landscape) */
+
+@media (max-height: 560px) and (orientation: landscape) {
+  .admin-shell .sidebar {
+    padding-block: var(--sp-3);
+  }
+  .dash .ui-modal {
+    max-height: 96dvh;
+  }
+  .dash .auth-screen {
+    justify-content: flex-start;
+  }
+  .dash .auth-brand {
+    display: none;
+  }
+  .dash .auth-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* =========================================== input capability, not width ==
+   A phone in "Desktop site" mode keeps a wide viewport but a coarse pointer:
+   these rules grow the hit areas there without touching mouse layouts. */
+
+@media (pointer: coarse) {
+  .dash .btn,
+  .dash .input,
+  .dash .select,
+  .dash .textarea {
+    min-height: 42px;
+  }
+  .dash .btn--sm {
+    min-height: 38px;
+  }
+  .dash .icon-btn {
+    width: 42px;
+    height: 42px;
+  }
+  .dash .icon-btn--sm {
+    width: 38px;
+    height: 38px;
+  }
+  .dash .nav-item,
+  .dash .menu-item,
+  .dash .tab {
+    min-height: 44px;
+  }
+  .admin-shell .nav-item {
+    min-height: 46px;
+  }
+  .dash .segmented-item {
+    min-height: 38px;
+  }
+  .dash .rating-star {
+    width: 40px;
+    height: 40px;
+  }
+  .dash .switch {
+    width: 52px;
+    height: 30px;
+  }
+  .dash .icon-option {
+    min-height: 76px;
+  }
+  .dash .theme-toggle {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    min-height: 42px;
+  }
+  .admin-shell .topbar-menu {
+    width: 42px;
+    height: 42px;
+  }
+}
+
+/* A touch device asking for the desktop layout still gets the off-canvas
+   sidebar: a 300px rail on a 980px-wide phone screen is unusable. */
+@media (pointer: coarse) and (hover: none) and (max-width: 1200px) {
+  .admin-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .admin-shell .sidebar {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 60;
+    width: min(86%, 310px);
+    height: 100dvh;
+    transform: translateX(100%);
+    visibility: hidden;
+    transition:
+      transform var(--dur-3) var(--ease),
+      visibility var(--dur-3) var(--ease);
+  }
+  .admin-shell .sidebar--open {
+    transform: none;
+    visibility: visible;
+    box-shadow: var(--dash-shadow-lg);
+  }
+  .admin-shell .sidebar-close,
+  .admin-shell .topbar-menu {
+    display: inline-grid;
+  }
+  .admin-shell .sidebar-rail-toggle {
+    display: none;
+  }
+}
+
+/* ========================================== phone + finger: the 44px floor ==
+   The width blocks above and the `pointer: coarse` block above each set their
+   own minimums; on a phone held in the hand both apply, and the stricter of
+   the two has to win. This block is last on purpose so every tappable control
+   clears 44×44 on a real phone — mouse-driven narrow windows keep the tighter
+   desktop sizing. */
+
+@media (pointer: coarse) and (max-width: 430px) {
+  .dash .btn,
+  .dash .btn--sm,
+  .dash .tab,
+  .dash .menu-item,
+  .dash .nav-item,
+  .dash .segmented-item,
+  .dash .switch-row,
+  .dash .disclosure-toggle,
+  .dash .add-item,
+  .dash .auth-link,
+  .dash .pager-controls .btn {
+    min-height: 44px;
+  }
+  .dash .icon-btn,
+  .dash .icon-btn--sm,
+  .dash .rating-star {
+    width: 44px;
+    height: 44px;
+  }
+  .dash .theme-toggle,
+  .admin-shell .topbar-menu,
+  .admin-shell .profile-chip {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .admin-shell .profile-chip {
+    padding: 5px;
+    justify-content: center;
+  }
+  .admin-shell .profile-chip img,
+  .admin-shell .avatar-fallback {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* Fields grow a little so a 44px affix button still fits inside them. */
+  .dash .input,
+  .dash .select {
+    min-height: 48px;
+  }
+  .dash .input-affix-btn,
+  .dash .search-clear {
+    width: 44px;
+    height: 44px;
+  }
+  .dash .input--affixed,
+  .dash .input--search {
+    padding-inline-end: 50px;
+  }
+
+  /* The toggle keeps its compact look: the button becomes the hit area and the
+     track moves to a pseudo-element. */
+  .dash .switch {
+    width: 56px;
+    height: 44px;
+    border: 0;
+    background: none;
+  }
+  .dash .switch::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: 5px;
+    top: 50%;
+    width: 46px;
+    height: 28px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--dash-line-strong);
+    background: var(--dash-surface-3);
+    transform: translateY(-50%);
+    transition:
+      background-color var(--dur-2) var(--ease),
+      border-color var(--dur-2) var(--ease);
+  }
+  .dash .switch--on::before {
+    background: var(--dash-primary);
+    border-color: var(--dash-primary);
+  }
+  .dash .switch-knob {
+    inset-inline-start: 8px;
+  }
+}
+
+/* Hover-dependent affordances only exist where hover exists. */
+@media (hover: none) {
+  .dash .product-tile:hover {
+    box-shadow: none;
+  }
+  .dash .quick-action:hover .quick-action-go {
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------ print view */
+
+@media print {
+  .admin-shell .sidebar,
+  .admin-shell .topbar,
+  .dash .save-bar,
+  .dash .toast-stack {
+    display: none !important;
+  }
+  .admin-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

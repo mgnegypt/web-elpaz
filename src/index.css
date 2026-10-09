@@ -1695,6 +1695,29 @@ img {
   display: flex;
   justify-content: center;
   gap: 5px;
+  direction: ltr; /* partial fills always grow from the left, as everywhere else */
+}
+/* A star that can be partially filled (ratings support decimals: 4.5, 4.8…). */
+.star-slot {
+  position: relative;
+  display: inline-flex;
+  line-height: 0;
+}
+.star-slot > .star-fill {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  overflow: hidden;
+  display: inline-flex;
+  line-height: 0;
+  pointer-events: none;
+}
+.star-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-inline-start: 6px;
+  align-self: center;
 }
 .quote-content blockquote {
   font-size: 24px;
@@ -3950,5 +3973,95 @@ html.theme-anim *:not(.milk-layer):not(.milk-wave) {
   .theme-toggle .theme-icon,
   .spin {
     animation: none !important;
+  }
+}
+
+/* ===========================================================================
+   CONTENT STATUS STRIP
+   Shown only when a content refresh fails. Fixed, so the scroll-snap sections
+   keep their exact height, and parked above the bottom dock controls.
+   =========================================================================== */
+.content-notice {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(22px + env(safe-area-inset-bottom));
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 9px 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--hairline) 18%, transparent);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  animation: announce-in 0.4s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+.content-notice p {
+  margin: 0;
+  min-width: 0;
+  line-height: 1.5;
+}
+.content-notice-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.content-notice--bundled .content-notice-icon {
+  background: color-mix(in srgb, #d98324 18%, transparent);
+  color: #a3621a;
+}
+.content-notice-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--hairline) 26%, transparent);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.content-notice-retry:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.content-notice-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (max-width: 900px) {
+  /* Clear the progress dial / section counter parked at the bottom edge. */
+  .content-notice {
+    bottom: calc(78px + env(safe-area-inset-bottom));
+  }
+}
+@media (max-width: 420px) {
+  .content-notice {
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12.5px;
+  }
+  .content-notice-retry {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .content-notice {
+    animation: none;
   }
 }

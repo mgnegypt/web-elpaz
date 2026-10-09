@@ -403,17 +403,20 @@ test("owner: profile panel closes with X, edits details, and logs out from the b
   await page.getByRole("heading", { name: "الملف الشخصي" }).waitFor();
   await shot(page, "admin-09-profile");
 
-  // Session information is visible and the answer is never displayed.
-  const drawerText = await drawer.innerText();
-  assert.match(drawerText, /مدة الجلسة الحالية/);
-  assert.match(drawerText, /تنتهي في/);
-  assert.equal(drawerText.includes(OWNER.answer), false);
-  assert.equal(drawerText.includes(OWNER.password), false);
+  // The panel is split into tabs: session details live in the last one.
+  const tab = (name) => drawer.getByRole("tab", { name, exact: true });
+  await tab("الجلسة الحالية").click();
+  const sessionText = await drawer.innerText();
+  assert.match(sessionText, /مدة الجلسة الحالية/);
+  assert.match(sessionText, /تنتهي في/);
+  assert.equal(sessionText.includes(OWNER.answer), false);
+  assert.equal(sessionText.includes(OWNER.password), false);
 
   // No other account is reachable from here.
-  assert.equal(drawerText.includes("editor"), false);
+  assert.equal(sessionText.includes("editor"), false);
 
   // Edit the display name and verify the header follows.
+  await tab("معلومات الحساب").click();
   await drawer.getByLabel("الاسم الظاهر").fill("محمد نجيب - المالك");
   await drawer.getByRole("button", { name: "حفظ البيانات" }).click();
   await page.getByText("تم حفظ بيانات الحساب.").waitFor({ timeout: 15000 });
@@ -423,6 +426,7 @@ test("owner: profile panel closes with X, edits details, and logs out from the b
   );
 
   // Changing the security question requires the current answer first.
+  await tab("الأمان").click();
   await drawer.getByLabel("الإجابة الحالية").fill("إجابة غلط");
   await drawer.getByLabel("السؤال").fill("سؤال مختلف؟");
   await drawer.getByLabel("الإجابة الجديدة").fill("إجابة مختلفة");
@@ -485,8 +489,11 @@ test("owner: product CRUD with image upload, availability states and live badges
   const name = "منتج اختبار آلي";
   await page.getByRole("button", { name: "منتج جديد" }).click();
   await page.getByLabel("اسم المنتج").fill(name);
-  await page.getByLabel("التصنيف").fill("ألبان");
+  // The panel also has a "تصفية حسب التصنيف" filter, so target the form field.
+  await page.getByRole("textbox", { name: "التصنيف", exact: true }).fill("ألبان");
   await page.getByLabel("وصف قصير").fill("وصف تجريبي من الاختبار الآلي");
+  // Packaging lives behind the "extra options" disclosure.
+  await page.getByRole("button", { name: /خيارات إضافية/ }).click();
   await page.getByLabel("العبوة / الحجم").fill("١ كجم");
 
   const png = Buffer.from(

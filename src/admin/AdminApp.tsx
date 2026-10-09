@@ -1,5 +1,12 @@
-// Dashboard shell: bootstrap → auth → application chrome (sidebar + header).
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// Dashboard shell: bootstrap → auth → application chrome (sidebar + top bar).
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ContentDoc } from "../../shared/content.ts";
 import {
   ApiFailure,
@@ -9,8 +16,7 @@ import {
   type AdminSession,
 } from "./api";
 import { Icons } from "./icons";
-import { Skeleton } from "./ui";
-import { ToastProvider, useToast } from "./ui";
+import { Skeleton, ToastProvider, useToast } from "./ui";
 import AuthScreen from "./AuthScreen";
 import OverviewPanel from "./OverviewPanel";
 import ProductsPanel from "./ProductsPanel";
@@ -41,6 +47,8 @@ const OWNER_NAV = [
   { key: "audit", label: "سجل النشاط", icon: "activity" },
 ] as const;
 
+const RAIL_KEY = "elbaz-admin-rail";
+
 function Dashboard() {
   const toast = useToast();
   const [session, setSession] = useState<AdminSession | null>(null);
@@ -51,7 +59,12 @@ function Dashboard() {
   const [online, setOnline] = useState(false);
   const [contentDirty, setContentDirty] = useState(false);
   const [staleRevision, setStaleRevision] = useState<number | null>(null);
+  // Desktop rail: a narrower sidebar that still shows a label under each icon.
+  const [rail, setRail] = useState(
+    () => localStorage.getItem(RAIL_KEY) === "1",
+  );
   const dirtyRef = useRef(false);
+  const mainRef = useRef<HTMLElement>(null);
 
   const sessionRef = useRef<AdminSession | null>(null);
   sessionRef.current = session;
@@ -66,6 +79,20 @@ function Dashboard() {
   useEffect(() => {
     dirtyRef.current = contentDirty;
   }, [contentDirty]);
+
+  useEffect(() => {
+    localStorage.setItem(RAIL_KEY, rail ? "1" : "0");
+  }, [rail]);
+
+  // Escape closes the off-canvas menu wherever focus happens to be.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
 
   const [stage, setStage] = useState<Stage>("boot");
   const [start, setStart] = useState<AuthStart>({ phase: "login" });
@@ -165,6 +192,14 @@ function Dashboard() {
       return;
     }
     setTab(next);
+    // Keyboard and screen-reader users land on the new panel, not where the
+    // old one used to be.
+    requestAnimationFrame(() => {
+      // `focus()` would scroll the panel under the sticky top bar; move the
+      // window to the top ourselves instead.
+      mainRef.current?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, left: 0 });
+    });
   };
 
   /** A 401 anywhere means the session died: return to the login screen. */
@@ -190,7 +225,7 @@ function Dashboard() {
 
   if (stage === "boot") {
     return (
-      <div className="admin-boot">
+      <div className="admin-boot dash">
         <div className="boot-brand">
           <span className="boot-mark">
             <Icons.brand size={24} />
@@ -202,7 +237,7 @@ function Dashboard() {
         </div>
         <div className="boot-cards">
           {[0, 1, 2].map((index) => (
-            <div className="glass-card skeleton-card" key={index}>
+            <div className="skeleton-card" key={index}>
               <Skeleton width="45%" height={16} />
               <Skeleton width="85%" height={12} />
               <Skeleton width="65%" height={12} />
@@ -233,46 +268,93 @@ function Dashboard() {
 
   const activeLabel =
     [...NAV, ...OWNER_NAV].find((item) => item.key === tab)?.label ?? "";
+  const ownerNavKeys = OWNER_NAV.map((item) => item.key) as string[];
 
   return (
-    <div className="admin-shell">
-      <aside className={`sidebar${menuOpen ? " sidebar--open" : ""}`}>
-        <div className="sidebar-brand">
-          <span className="sidebar-mark">
-            <Icons.brand size={22} />
+    <div className="admin-shell dash" data-rail={rail ? "true" : "false"}>
+      <a className="skip-link" href="#admin-main">
+        تخطّي إلى محتوى الصفحة
+      </a>
+
+      <aside
+        id="admin-sidebar"
+        className={`sidebar${menuOpen ? " sidebar--open" : ""}`}
+      >
+        <div className="sidebar-head">
+          <span className="sidebar-brand">
+            <span className="sidebar-mark">
+              <Icons.brand size={21} />
+            </span>
+            <span className="sidebar-brand-text">
+              <strong>البان إلباظ</strong>
+              <span>لوحة التحكم</span>
+            </span>
           </span>
-          <div>
-            <strong>البان إلباظ</strong>
-            <span>لوحة التحكم</span>
-          </div>
+          <span className="sidebar-head-tools">
+            <button
+              type="button"
+              className="icon-btn icon-btn--ghost sidebar-rail-toggle"
+              onClick={() => setRail((value) => !value)}
+              aria-label={rail ? "توسيع القائمة الجانبية" : "تصغير القائمة الجانبية"}
+              title={rail ? "توسيع القائمة الجانبية" : "تصغير القائمة الجانبية"}
+              aria-pressed={rail}
+            >
+              {rail ? <Icons.railOpen size={18} /> : <Icons.railClose size={18} />}
+            </button>
+            <button
+              type="button"
+              className="icon-btn icon-btn--ghost sidebar-close"
+              onClick={() => setMenuOpen(false)}
+              aria-label="طيّ القائمة"
+            >
+              <Icons.close size={18} />
+            </button>
+          </span>
         </div>
+
         <nav className="sidebar-nav" aria-label="أقسام اللوحة">
-          {navItems.map((item) => {
+          <p className="nav-section">إدارة الموقع</p>
+          {navItems.map((item, index) => {
             const Icon = Icons[item.icon];
+            const ownerSection =
+              ownerNavKeys.includes(item.key) &&
+              !ownerNavKeys.includes(navItems[index - 1]?.key ?? "");
             return (
-              <button
-                key={item.key}
-                className={`nav-item${tab === item.key ? " nav-item--active" : ""}`}
-                onClick={() => goTo(item.key)}
-                aria-current={tab === item.key ? "page" : undefined}
-              >
-                <Icon size={19} />
-                <span>{item.label}</span>
-              </button>
+              <Fragment key={item.key}>
+                {ownerSection && <p className="nav-section">صلاحيات المالك</p>}
+                <button
+                  type="button"
+                  className={`nav-item${tab === item.key ? " nav-item--active" : ""}`}
+                  onClick={() => goTo(item.key)}
+                  aria-current={tab === item.key ? "page" : undefined}
+                >
+                  <Icon size={19} />
+                  <span className="nav-item-label">{item.label}</span>
+                </button>
+              </Fragment>
             );
           })}
         </nav>
+
         <div className="sidebar-foot">
-          <button className="nav-item" onClick={() => setProfileOpen(true)}>
+          <button
+            type="button"
+            className="nav-item"
+            onClick={() => {
+              setMenuOpen(false);
+              setProfileOpen(true);
+            }}
+          >
             <Icons.user size={19} />
-            <span>الملف الشخصي</span>
+            <span className="nav-item-label">الملف الشخصي</span>
           </button>
           <button
+            type="button"
             className="nav-item nav-item--danger"
             onClick={() => void logout()}
           >
             <Icons.logout size={19} />
-            <span>تسجيل الخروج</span>
+            <span className="nav-item-label">تسجيل الخروج</span>
           </button>
           <p className="sidebar-note">
             <Icons.shield size={13} />
@@ -281,17 +363,25 @@ function Dashboard() {
         </div>
       </aside>
 
+      {/* Pointer users dismiss the menu by tapping outside; keyboard users press
+          Escape or use the close control inside the panel. */}
       {menuOpen && (
-        <div className="sidebar-scrim" onClick={() => setMenuOpen(false)} />
+        <div
+          className="sidebar-scrim"
+          aria-hidden="true"
+          onClick={() => setMenuOpen(false)}
+        />
       )}
 
       <div className="admin-body">
         <header className="topbar">
           <button
-            className="icon-btn icon-btn--ghost topbar-menu"
+            type="button"
+            className="icon-btn icon-btn--outline topbar-menu"
             onClick={() => setMenuOpen((open) => !open)}
             aria-label="فتح القائمة"
             aria-expanded={menuOpen}
+            aria-controls="admin-sidebar"
           >
             <Icons.menu size={20} />
           </button>
@@ -310,6 +400,7 @@ function Dashboard() {
           <div className="topbar-actions">
             {staleRevision !== null && (
               <button
+                type="button"
                 className="stale-chip"
                 onClick={() => {
                   void adminApi.content().then((document_) => {
@@ -324,8 +415,10 @@ function Dashboard() {
             )}
             <ThemeToggle />
             <button
+              type="button"
               className="profile-chip"
               onClick={() => setProfileOpen(true)}
+              aria-label={`الملف الشخصي — ${session.displayName}`}
             >
               {session.avatarUrl ? (
                 <img src={session.avatarUrl} alt="" />
@@ -342,42 +435,47 @@ function Dashboard() {
           </div>
         </header>
 
-        <main className="admin-main">
-          {tab === "overview" && (
-            <OverviewPanel
-              session={session}
-              content={content}
-              online={online}
-              onNavigate={goTo}
-            />
-          )}
-          {tab === "products" && (
-            <ProductsPanel
-              content={content}
-              onContent={setContent}
-              categories={content.categories}
-            />
-          )}
-          {tab === "events" && <EventsPanel />}
-          {tab === "content" && (
-            <ContentPanel
-              content={content}
-              onContent={setContent}
-              onDirtyChange={setContentDirty}
-            />
-          )}
-          {tab === "requests" && <RequestsPanel />}
-          {tab === "admins" && session.capabilities.manageAdmins && (
-            <AdminsPanel selfId={session.id} />
-          )}
-          {tab === "admins" && !session.capabilities.manageAdmins && (
-            <div className="card">
-              <p className="confirm-text">هذه الصفحة متاحة للمالك فقط.</p>
-            </div>
-          )}
-          {tab === "audit" && session.capabilities.manageAdmins && (
-            <AuditPanel />
-          )}
+        <main className="admin-main" id="admin-main" ref={mainRef} tabIndex={-1}>
+          {/* `key` restarts the enter animation on every section change. */}
+          <div className="panel" key={tab}>
+            {tab === "overview" && (
+              <OverviewPanel
+                session={session}
+                content={content}
+                online={online}
+                onNavigate={goTo}
+              />
+            )}
+            {tab === "products" && (
+              <ProductsPanel
+                content={content}
+                onContent={setContent}
+                categories={content.categories}
+              />
+            )}
+            {tab === "events" && <EventsPanel />}
+            {tab === "content" && (
+              <ContentPanel
+                content={content}
+                onContent={setContent}
+                onDirtyChange={setContentDirty}
+              />
+            )}
+            {tab === "requests" && <RequestsPanel />}
+            {tab === "admins" && session.capabilities.manageAdmins && (
+              <AdminsPanel selfId={session.id} />
+            )}
+            {tab === "admins" && !session.capabilities.manageAdmins && (
+              <div className="card">
+                <div className="card-body">
+                  <p className="confirm-text">هذه الصفحة متاحة للمالك فقط.</p>
+                </div>
+              </div>
+            )}
+            {tab === "audit" && session.capabilities.manageAdmins && (
+              <AuditPanel />
+            )}
+          </div>
         </main>
       </div>
 

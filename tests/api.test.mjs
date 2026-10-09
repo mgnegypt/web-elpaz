@@ -8,7 +8,23 @@ import {
   setupOwner,
   startTestServer,
 } from "./helper.mjs";
+import { request as httpRequest } from "node:http";
 import { DEFAULT_CONTENT } from "../shared/content.ts";
+
+/** A plain HTTP GET: no fetch/undici cache semantics in the way. */
+const rawGet = (base, path, headers = {}) =>
+  new Promise((resolve, reject) => {
+    const url = new URL(path, base);
+    const req = httpRequest(
+      { hostname: url.hostname, port: url.port, path: url.pathname, method: "GET", headers },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve({ status: res.statusCode, headers: res.headers }));
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
 
 let api;
 
@@ -1325,6 +1341,380 @@ test("rate limiting still guards the admin login in production settings", async 
       blocked > 0,
       "repeated login attempts must eventually be rate limited",
     );
+  } finally {
+    await strict.close();
+  }
+});
+
+/* ======================================================================== */
+/* Content authority: the stored document always wins over the bundle.      */
+/* Regression cover for "the public site briefly showed the old/default      */
+/* products, images and logo".                                              */
+/* ======================================================================== */
+
+test("the public content response is revalidated, never served stale from a cache", async () => {
+  const response = await api.request("/api/content");
+  assert.equal(response.status, 200);
+  // `no-cache` lets a browser or proxy keep a copy but forces revalidation,
+  // so a published change can never be hidden behind a cached body.
+  const cacheControl = response.headers.get("cache-control") ?? "";
+  assert.match(cacheControl, /no-cache|no-store/);
+  assert.ok(response.headers.get("etag"), "an ETag keeps revalidation cheap");
+
+  // The conditional request must be answered with 304, not a stale 200 body.
+  // Raw http on purpose: Node's fetch adds `cache-control: no-cache` to any
+  // conditional request, which (correctly) forces a full response.
+  const conditional = await rawGet(api.base, "/api/content", {
+    "if-none-match": response.headers.get("etag"),
+  });
+  assert.equal(conditional.status, 304);
+});
+
+test("health reports which database and revision this process is serving", async () => {
+  const health = await api.request("/api/health");
+  assert.equal(health.status, 200);
+  assert.equal(health.body.ok, true);
+  assert.equal(health.body.content.readable, true);
+  assert.ok(health.body.content.revision >= 1);
+  // A brand-new throwaway database: seeded on this boot, by definition.
+  assert.equal(health.body.content.freshDatabase, true);
+  assert.equal(health.body.content.seededThisBoot, true);
+  // Operational facts only — never the content itself.
+  assert.equal(health.body.content.products, undefined);
+});
+
+test("a restart never re-seeds: published content survives and is not re-defaulted", async () => {
+  const first = await startTestServer({ preserve: true });
+  const dataDir = first.dataDir;
+  try {
+    const { session } = await setupOwner(first);
+    const csrf = { "x-csrf-token": session.body.csrf };
+    const current = (await first.request("/api/admin/content")).body;
+    const saved = await first.json(
+      "/api/admin/content",
+      "PUT",
+      {
+        ...current,
+        revision: current.revision,
+        site: { ...current.site, logoUrl: "https://cdn.example.com/real-logo.png" },
+        copy: { ...current.copy, heroTagline: "محتوى الإنتاج الحقيقي" },
+      },
+      csrf,
+    );
+    assert.equal(saved.status, 200);
+  } finally {
+    await first.close();
+  }
+
+  // Three consecutive restarts on the same directory: still the owner's text,
+  // still revision 2, and the seed path must stay silent.
+  for (let restart = 0; restart < 3; restart += 1) {
+    const again = await startTestServer({ dataDir, preserve: true });
+    try {
+      const health = await again.request("/api/health");
+      assert.equal(health.body.content.seededThisBoot, false);
+      assert.equal(health.body.content.freshDatabase, false);
+      assert.equal(health.body.content.revision, 2);
+
+      const content = (await again.request("/api/content")).body;
+      assert.equal(content.copy.heroTagline, "محتوى الإنتاج الحقيقي");
+      assert.equal(content.site.logoUrl, "https://cdn.example.com/real-logo.png");
+      assert.notEqual(content.copy.heroTagline, DEFAULT_CONTENT.copy.heroTagline);
+    } finally {
+      await again.close();
+    }
+  }
+  rmSync(dataDir, { recursive: true, force: true });
+});
+
+test("an unreadable stored document answers 503 instead of silently serving defaults", async () => {
+  const broken = await startTestServer({ preserve: true });
+  const dataDir = broken.dataDir;
+  try {
+    // Corrupt the stored document the way a bad migration or a half-written
+    // row would: still JSON, no longer valid content.
+    broken.db.raw
+      .prepare("UPDATE content SET json = ? WHERE id = 1")
+      .run(JSON.stringify({ site: { name: "" }, products: "not-an-array" }));
+
+    const response = await broken.request("/api/content");
+    assert.equal(response.status, 503);
+    assert.equal(response.body.error, "content-unavailable");
+    // Crucially: the bundled defaults are NOT offered as a replacement.
+    assert.equal(response.body.products, undefined);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+
+    const health = await broken.request("/api/health");
+    assert.equal(health.body.content.readable, false);
+  } finally {
+    await broken.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("documents written before the authenticity fields still load unchanged", async () => {
+  const legacy = await startTestServer({ preserve: true });
+  const dataDir = legacy.dataDir;
+  try {
+    // A document exactly as an older build stored it: no imageAuthenticity on
+    // products, no authenticity on reviews, decisions carried by the old flags.
+    const stored = JSON.parse(JSON.stringify(DEFAULT_CONTENT));
+    for (const product of stored.products) delete product.imageAuthenticity;
+    for (const review of stored.reviews) delete review.authenticity;
+    stored.contentStatus.placeholderProductIds = [5, 6];
+    stored.contentStatus.testimonialsArePlaceholders = true;
+    legacy.db.raw
+      .prepare("UPDATE content SET json = ?, revision = 7 WHERE id = 1")
+      .run(JSON.stringify(stored));
+
+    const response = await legacy.request("/api/content");
+    assert.equal(response.status, 200);
+    assert.equal(response.body.revision, 7);
+    // Missing fields read back as "unspecified" — never as a claim either way.
+    for (const product of response.body.products) {
+      assert.equal(product.imageAuthenticity, "unspecified");
+    }
+    for (const review of response.body.reviews) {
+      assert.equal(review.authenticity, "unspecified");
+    }
+    // And the legacy flags still decide exactly what they decided before.
+    assert.deepEqual(response.body.contentStatus.placeholderProductIds, [5, 6]);
+    assert.equal(response.body.contentStatus.testimonialsArePlaceholders, true);
+  } finally {
+    await legacy.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("authenticity rules: explicit flags win, ratings never decide", async () => {
+  const {
+    productImageIsIllustrative,
+    reviewIsIllustrative,
+    unclassifiedIllustrativeProducts,
+  } = await import("../shared/content.ts");
+
+  const legacyStatus = { placeholderProductIds: [5, 6] };
+  // 1. A confirmed product photo never carries the disclaimer, even when the
+  //    legacy list still names its id.
+  assert.equal(
+    productImageIsIllustrative({ id: 5, imageAuthenticity: "genuine" }, legacyStatus),
+    false,
+  );
+  // 2. A product marked illustrative always carries it.
+  assert.equal(
+    productImageIsIllustrative({ id: 99, imageAuthenticity: "illustrative" }, legacyStatus),
+    true,
+  );
+  // 3. Undecided records keep their previous behaviour exactly.
+  assert.equal(
+    productImageIsIllustrative({ id: 6, imageAuthenticity: "unspecified" }, legacyStatus),
+    true,
+  );
+  assert.equal(
+    productImageIsIllustrative({ id: 7, imageAuthenticity: "unspecified" }, legacyStatus),
+    false,
+  );
+
+  const reviewStatus = { testimonialsArePlaceholders: true };
+  // 4. A genuine review is genuine at any rating — including a bad one.
+  for (const rating of [1, 1.5, 2, 4.8, 5]) {
+    assert.equal(
+      reviewIsIllustrative({ authenticity: "genuine", rating }, reviewStatus),
+      false,
+      `a genuine ${rating}/5 review must never be labelled illustrative`,
+    );
+  }
+  // 5. A sample review keeps its label even when the global switch is off.
+  assert.equal(
+    reviewIsIllustrative(
+      { authenticity: "illustrative" },
+      { testimonialsArePlaceholders: false },
+    ),
+    true,
+  );
+  // 6. Undecided reviews follow the global switch, as before.
+  assert.equal(reviewIsIllustrative({ authenticity: "unspecified" }, reviewStatus), true);
+  assert.equal(
+    reviewIsIllustrative({ authenticity: "unspecified" }, { testimonialsArePlaceholders: false }),
+    false,
+  );
+
+  // 7. The admin list of records needing a human decision.
+  assert.deepEqual(
+    unclassifiedIllustrativeProducts(
+      [
+        { id: 5, name: "مُعلَّق", imageAuthenticity: "unspecified" },
+        { id: 6, name: "محسوم", imageAuthenticity: "genuine" },
+        { id: 9, name: "خارج القائمة", imageAuthenticity: "unspecified" },
+      ],
+      legacyStatus,
+    ).map((p) => p.name),
+    ["مُعلَّق"],
+  );
+});
+
+test("a new product never inherits the illustrative label of a deleted one", async () => {
+  const shop = await startTestServer();
+  try {
+    const { session } = await setupOwner(shop);
+    const csrf = { "x-csrf-token": session.body.csrf };
+    const before = (await shop.request("/api/admin/content")).body;
+    const placeholderId = before.contentStatus.placeholderProductIds.at(-1);
+    assert.ok(placeholderId, "the seed ships legacy placeholder ids");
+    const highest = Math.max(...before.products.map((p) => p.id));
+
+    // Delete products down to the placeholder id so the next id is recycled.
+    let revision = before.revision;
+    for (let id = highest; id >= placeholderId; id -= 1) {
+      const removed = await shop.json(
+        `/api/admin/products/${id}`,
+        "DELETE",
+        { revision },
+        csrf,
+      );
+      assert.equal(removed.status, 200);
+      revision = removed.body.revision;
+    }
+
+    // The owner adds a real product; it gets the recycled number.
+    const created = await shop.json(
+      "/api/admin/products",
+      "POST",
+      {
+        revision,
+        product: {
+          category: "أجبان",
+          name: "جبن قريش بلدي",
+          desc: "منتج حقيقي بصورته",
+          longDesc: "",
+          size: "1 كجم",
+          img: "/uploads/real-photo.png",
+          webp: "",
+          fallback: "",
+          color: "#f3e3c3",
+        },
+      },
+      csrf,
+    );
+    assert.equal(created.status, 201);
+    assert.equal(created.body.product.id, placeholderId);
+
+    const { productImageIsIllustrative } = await import("../shared/content.ts");
+    const published = (await shop.request("/api/content")).body;
+    const fresh = published.products.find((p) => p.id === placeholderId);
+    assert.equal(fresh.name, "جبن قريش بلدي");
+    assert.equal(fresh.imageAuthenticity, "unspecified");
+    // The stale id has been released, so nothing labels this real product.
+    assert.equal(
+      published.contentStatus.placeholderProductIds.includes(placeholderId),
+      false,
+    );
+    assert.equal(productImageIsIllustrative(fresh, published.contentStatus), false);
+  } finally {
+    await shop.close();
+  }
+});
+
+test("authenticity choices round-trip through the product and content APIs", async () => {
+  const shop = await startTestServer();
+  try {
+    const { session } = await setupOwner(shop);
+    const csrf = { "x-csrf-token": session.body.csrf };
+    const current = (await shop.request("/api/admin/content")).body;
+    const marked = current.contentStatus.placeholderProductIds[0];
+    const product = current.products.find((p) => p.id === marked);
+    assert.ok(product, "a seeded product carries a legacy placeholder id");
+
+    // Confirming the photo clears the legacy entry as well as setting the flag.
+    const updated = await shop.json(
+      `/api/admin/products/${marked}`,
+      "PUT",
+      {
+        revision: current.revision,
+        product: {
+          category: product.category,
+          name: product.name,
+          desc: product.desc,
+          longDesc: product.longDesc,
+          size: product.size,
+          img: product.img,
+          webp: product.webp,
+          fallback: product.fallback,
+          color: product.color,
+          imageAuthenticity: "genuine",
+        },
+      },
+      csrf,
+    );
+    assert.equal(updated.status, 200);
+
+    const afterProduct = (await shop.request("/api/content")).body;
+    assert.equal(
+      afterProduct.products.find((p) => p.id === marked).imageAuthenticity,
+      "genuine",
+    );
+    assert.equal(
+      afterProduct.contentStatus.placeholderProductIds.includes(marked),
+      false,
+    );
+
+    // Reviews: a genuine one-star opinion saved from the dashboard.
+    const saved = await shop.json(
+      "/api/admin/content",
+      "PUT",
+      {
+        ...afterProduct,
+        revision: afterProduct.revision,
+        reviews: [
+          {
+            name: "عميل غاضب",
+            role: "تاجر جملة",
+            rating: 1.5,
+            text: "التوصيل تأخر مرتين.",
+            authenticity: "genuine",
+          },
+          {
+            name: "نموذج",
+            role: "عميل",
+            rating: 5,
+            text: "نص توضيحي.",
+            authenticity: "illustrative",
+          },
+        ],
+      },
+      csrf,
+    );
+    assert.equal(saved.status, 200);
+
+    const { reviewIsIllustrative } = await import("../shared/content.ts");
+    const published = (await shop.request("/api/content")).body;
+    const [real, sample] = published.reviews;
+    assert.equal(real.authenticity, "genuine");
+    assert.equal(real.rating, 1.5, "the low rating is stored exactly as written");
+    assert.equal(reviewIsIllustrative(real, published.contentStatus), false);
+    assert.equal(sample.authenticity, "illustrative");
+    assert.equal(reviewIsIllustrative(sample, published.contentStatus), true);
+  } finally {
+    await shop.close();
+  }
+});
+
+test("a throttled public read asks the client to come back instead of failing open", async () => {
+  // A deliberately tiny budget: the public site must receive a retry hint.
+  const strict = await startTestServer({
+    relaxRateLimits: false,
+    publicReadLimit: 2,
+  });
+  try {
+    let throttled = null;
+    for (let i = 0; i < 6 && !throttled; i += 1) {
+      const response = await strict.request("/api/content");
+      if (response.status === 429) throttled = response;
+    }
+    assert.ok(throttled, "the public read limiter must engage");
+    assert.equal(throttled.body.error, "too-many-requests");
+    assert.ok(Number(throttled.headers.get("retry-after")) > 0);
+    assert.equal(throttled.headers.get("cache-control"), "no-store");
   } finally {
     await strict.close();
   }

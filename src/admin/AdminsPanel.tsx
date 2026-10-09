@@ -16,14 +16,16 @@ import {
   Modal,
   OptionGroup,
   PageHeader,
+  PasswordInput,
   Select,
-  Skeleton,
+  SkeletonRows,
+  StatPill,
+  TableWrap,
   TextInput,
   describeError,
   fieldErrorsOf,
   useToast,
 } from "./ui";
-import { StatPill } from "./ProductsPanel";
 
 type Draft = {
   id: number | null;
@@ -133,21 +135,18 @@ export default function AdminsPanel({ selfId }: { selfId: number }) {
       />
 
       <div className="stat-row">
-        <StatPill label="الحسابات" value={items?.length ?? 0} tone="blue" icon={<Icons.users size={16} />} />
-        <StatPill label="حسابات المالك" value={owners} tone="green" icon={<Icons.shield size={16} />} />
-        <StatPill label="مشرفون" value={(items?.length ?? 0) - owners} tone="violet" icon={<Icons.userCog size={16} />} />
+        <StatPill label="الحسابات" value={items?.length ?? 0} tone="blue" icon={<Icons.users size={18} />} />
+        <StatPill label="حسابات المالك" value={owners} tone="green" icon={<Icons.shield size={18} />} />
+        <StatPill label="مشرفون" value={(items?.length ?? 0) - owners} tone="violet" icon={<Icons.userCog size={18} />} />
       </div>
 
       <Card title="الحسابات" icon={<Icons.users size={18} />}>
         {items === null ? (
-          <div className="skeleton-lines">
-            <Skeleton height={48} radius={12} />
-            <Skeleton height={48} radius={12} />
-          </div>
+          <SkeletonRows rows={3} height={52} />
         ) : items.length === 0 ? (
           <EmptyState title="لا توجد حسابات" icon={<Icons.users size={28} />} />
         ) : (
-          <div className="table-wrap">
+          <TableWrap label="جدول حسابات المشرفين">
             <table className="data-table">
               <thead>
                 <tr>
@@ -164,8 +163,17 @@ export default function AdminsPanel({ selfId }: { selfId: number }) {
                 {items.map((item) => (
                   <tr key={item.id}>
                     <td data-label="الاسم">
-                      <span className="cell-strong">{item.displayName}</span>
-                      {item.id === selfId && <Badge tone="blue">أنت</Badge>}
+                      <div className="cell-identity">
+                        <span className="cell-avatar" aria-hidden="true">
+                          {item.displayName.trim().charAt(0) || "؟"}
+                        </span>
+                        <span className="cell-strong">{item.displayName}</span>
+                        {item.id === selfId && (
+                          <Badge tone="blue" size="sm">
+                            أنت
+                          </Badge>
+                        )}
+                      </div>
                     </td>
                     <td data-label="اسم المستخدم" dir="ltr">
                       {item.username}
@@ -174,11 +182,27 @@ export default function AdminsPanel({ selfId }: { selfId: number }) {
                       {item.email || "—"}
                     </td>
                     <td data-label="الصلاحية">
-                      <Badge tone={item.role === "owner" ? "green" : "violet"}>
+                      <Badge
+                        tone={item.role === "owner" ? "green" : "violet"}
+                        icon={
+                          item.role === "owner" ? (
+                            <Icons.shield size={13} />
+                          ) : (
+                            <Icons.userCog size={13} />
+                          )
+                        }
+                      >
                         {item.role === "owner" ? "مالك" : "مشرف"}
                       </Badge>
                     </td>
-                    <td data-label="سؤال الأمان">{item.hasSecurityQuestion ? "مُعد" : "غير مُعد"}</td>
+                    <td data-label="سؤال الأمان">
+                      <Badge
+                        tone={item.hasSecurityQuestion ? "green" : "neutral"}
+                        size="sm"
+                      >
+                        {item.hasSecurityQuestion ? "مُعد" : "غير مُعد"}
+                      </Badge>
+                    </td>
                     <td data-label="آخر دخول">{item.lastLoginAt ? shortDateTime(item.lastLoginAt) : "لم يدخل بعد"}</td>
                     <td data-label="إجراءات">
                       <div className="row-actions">
@@ -215,7 +239,7 @@ export default function AdminsPanel({ selfId }: { selfId: number }) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableWrap>
         )}
       </Card>
 
@@ -254,7 +278,11 @@ export default function AdminsPanel({ selfId }: { selfId: number }) {
               hint="١٢ حرفًا على الأقل."
               error={errors.password}
             >
-              <TextInput value={draft.password} onChange={(password) => setDraft({ ...draft, password })} type="password" dir="ltr" autoComplete="new-password" />
+              <PasswordInput
+                value={draft.password}
+                onChange={(password) => setDraft({ ...draft, password })}
+                autoComplete="new-password"
+              />
             </Field>
             <Field label="الصلاحية" required>
               <OptionGroup<Role>

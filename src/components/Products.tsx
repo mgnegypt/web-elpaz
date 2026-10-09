@@ -4,6 +4,7 @@ import {
   AVAILABILITY_LABELS,
   isNewBadgeActive,
   isOrderable,
+  productImageIsIllustrative,
   stockLabel,
   type Product,
 } from "../../shared/content.ts";
@@ -86,7 +87,7 @@ export default function Products({
                     <PackageSearch size={38} />
                   </span>
                 )}
-                {contentStatus.placeholderProductIds.includes(p.id) && (
+                {productImageIsIllustrative(p, contentStatus) && (
                   <span className="sample-image">صورة توضيحية</span>
                 )}
               </div>

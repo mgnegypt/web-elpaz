@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Quote, Star, UserRound } from "lucide-react";
+import { reviewIsIllustrative } from "../../shared/content.ts";
 import { useContent } from "../content/ContentContext";
 import { SectionTitle } from "./shared";
 import { useReducedMotion } from "../hooks/useReducedMotion";
@@ -51,15 +52,32 @@ export default function Testimonials({ active }: { active: boolean }) {
         <Quote className="quote-mark" size={52} strokeWidth={1.1} />
         <div className="quote-content enter" key={index}>
           <div className="stars" aria-label={`${item.rating} من 5 نجوم`}>
-            {Array.from({ length: 5 }, (_, i) => (
-              <Star
-                key={i}
-                size={19}
-                fill={i < item.rating ? "#FFD86B" : "none"}
-                stroke="#D69D23"
-                strokeWidth={1}
-              />
-            ))}
+            {Array.from({ length: 5 }, (_, i) => {
+              // Decimal ratings (4.5, 4.8…) fill the matching slice of a star.
+              const fill = Math.min(1, Math.max(0, item.rating - i));
+              return (
+                <span className="star-slot" key={i}>
+                  <Star size={19} fill="none" stroke="#D69D23" strokeWidth={1} />
+                  {fill > 0 && (
+                    <span
+                      className="star-fill"
+                      style={{ width: `${fill * 100}%` }}
+                      aria-hidden="true"
+                    >
+                      <Star
+                        size={19}
+                        fill="#FFD86B"
+                        stroke="#D69D23"
+                        strokeWidth={1}
+                      />
+                    </span>
+                  )}
+                </span>
+              );
+            })}
+            <span className="star-value" dir="ltr" aria-hidden="true">
+              {item.rating} / 5
+            </span>
           </div>
           <blockquote>« {item.text} »</blockquote>
           <div className="review-person">
@@ -72,7 +90,7 @@ export default function Testimonials({ active }: { active: boolean }) {
             </div>
           </div>
         </div>
-        {contentStatus.testimonialsArePlaceholders && (
+        {reviewIsIllustrative(item, contentStatus) && (
           <span className="review-placeholder">
             رأي توضيحي — في انتظار آراء عملائنا الحقيقية
           </span>

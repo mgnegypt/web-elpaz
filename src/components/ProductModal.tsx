@@ -3,6 +3,7 @@ import { X, Package, ArrowUpLeft, BadgePercent, Clock, Sparkles, Truck } from "l
 import {
   isNewBadgeActive,
   isOrderable,
+  productImageIsIllustrative,
   stockLabel,
   type Product,
 } from "../../shared/content.ts";
@@ -103,7 +104,7 @@ export default function ProductModal({
             </span>
           )}
           <p>{p.longDesc}</p>
-          {contentStatus.placeholderProductIds.includes(p.id) && (
+          {productImageIsIllustrative(p, contentStatus) && (
             <small className="muted">
               الصورة توضيحية وسيتم تحديثها بصورة المنتج.
             </small>

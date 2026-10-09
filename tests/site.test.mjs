@@ -747,3 +747,368 @@ test("the dev server never serves private files", async () => {
     assert.equal(response.status, 404, `${path} must not be reachable in dev`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Published content: authority, failure handling and authenticity labels
+//
+// Regression cover for three production reports:
+//   1. the site briefly showed the old/default products, images and logo;
+//   2. real products were labelled "الصورة توضيحية";
+//   3. real customer reviews were labelled "رأي توضيحي".
+// ---------------------------------------------------------------------------
+
+const apiBase = process.env.TEST_API || "http://127.0.0.1:3001";
+
+/** The document the API is really serving right now. */
+async function publishedDocument() {
+  const response = await fetch(`${apiBase}/api/content`);
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
+/**
+ * Serves a crafted document to the browser for /api/content.
+ * Returns a handle that can change the document or start failing.
+ */
+async function serveContent(page, build) {
+  const state = { mode: "ok", document: build, calls: 0 };
+  await page.route("**/api/content", async (route) => {
+    state.calls += 1;
+    if (state.mode === "offline") return route.abort("failed");
+    if (state.mode === "error")
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "content-unavailable" }),
+      });
+    if (state.mode === "garbage")
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ revision: 99, products: "not-an-array" }),
+      });
+    if (state.mode === "empty")
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(state.document),
+    });
+  });
+  return state;
+}
+
+/** A page that is not loaded yet, so routing can be installed first. */
+async function blankPage({ width = 1280, height = 900 } = {}) {
+  const page = await browser.newPage({
+    viewport: { width, height },
+    reducedMotion: "reduce",
+  });
+  await page.route("https://files.catbox.moe/**", (route) => route.abort());
+  await page.route("https://fonts.googleapis.com/**", (route) => route.abort());
+  return page;
+}
+
+async function openSite(page) {
+  await page.goto(base);
+  await page.locator(".loader").waitFor({ state: "detached", timeout: 20000 });
+}
+
+/** Section 1 is the products grid; section 5 is the reviews carousel. */
+async function openSection(page, index) {
+  await page.locator(".dots-nav button").nth(index).click();
+  await page.locator(`.section-${index}.is-active`).waitFor({ state: "visible" });
+  await page.waitForTimeout(400);
+}
+
+test("published content is rendered, and the bundled defaults are not", async () => {
+  const published = await publishedDocument();
+  const page = await blankPage();
+  const served = await serveContent(page, {
+    ...published,
+    copy: { ...published.copy, productsSubtitle: "نص منشور من قاعدة البيانات" },
+    products: published.products.map((product, index) =>
+      index === 0 ? { ...product, name: "منتج منشور حقيقي" } : product,
+    ),
+  });
+  await openSite(page);
+  await openSection(page, 1);
+
+  assert.match(await page.locator(".products-container").innerText(), /منتج منشور حقيقي/);
+  assert.match(await page.locator(".products-container").innerText(), /نص منشور من قاعدة البيانات/);
+  assert.ok(served.calls >= 1, "the site must read /api/content");
+  await page.close();
+});
+
+test("a failed refresh keeps the loaded content and offers a retry", async () => {
+  const published = await publishedDocument();
+  const page = await blankPage();
+  const served = await serveContent(page, {
+    ...published,
+    products: published.products.map((product, index) =>
+      index === 0 ? { ...product, name: "منتج يبقى ظاهرًا" } : product,
+    ),
+  });
+  await openSite(page);
+  await openSection(page, 1);
+  assert.match(await page.locator(".products-container").innerText(), /منتج يبقى ظاهرًا/);
+
+  // The API goes away, and the tab is re-focused (the usual refresh trigger).
+  served.mode = "offline";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.locator(".content-notice").waitFor({ timeout: 10000 });
+
+  // The real content is still on screen: no silent fall back to the bundle.
+  assert.match(await page.locator(".products-container").innerText(), /منتج يبقى ظاهرًا/);
+  const notice = await page.locator(".content-notice").innerText();
+  assert.match(notice, /آخر نسخة محفوظة/);
+  assert.doesNotMatch(notice, /نسخة مبدئية/);
+
+  // Retrying while the API is healthy again clears the notice.
+  served.mode = "ok";
+  await page.getByRole("button", { name: "إعادة المحاولة" }).click();
+  await page.locator(".content-notice").waitFor({ state: "detached", timeout: 10000 });
+  assert.match(await page.locator(".products-container").innerText(), /منتج يبقى ظاهرًا/);
+  await page.close();
+});
+
+test("invalid, empty or stale responses never replace good content", async () => {
+  const published = await publishedDocument();
+  const page = await blankPage();
+  const served = await serveContent(page, {
+    ...published,
+    revision: 40,
+    products: published.products.map((product, index) =>
+      index === 0 ? { ...product, name: "النسخة الصحيحة" } : product,
+    ),
+  });
+  await openSite(page);
+  await openSection(page, 1);
+  const text = () => page.locator(".products-container").innerText();
+  assert.match(await text(), /النسخة الصحيحة/);
+
+  // 1. A 200 with a broken shape.
+  served.mode = "garbage";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.waitForTimeout(600);
+  assert.match(await text(), /النسخة الصحيحة/);
+
+  // 2. A 200 with an empty object.
+  served.mode = "empty";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.waitForTimeout(600);
+  assert.match(await text(), /النسخة الصحيحة/);
+
+  // 3. A valid but older revision (a stale copy from a cache or a slow retry).
+  served.mode = "ok";
+  served.document = {
+    ...published,
+    revision: 3,
+    products: published.products.map((product, index) =>
+      index === 0 ? { ...product, name: "نسخة قديمة" } : product,
+    ),
+  };
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.waitForTimeout(800);
+  assert.match(await text(), /النسخة الصحيحة/);
+  assert.doesNotMatch(await text(), /نسخة قديمة/);
+  await page.close();
+});
+
+test("a published update reaches the site on the next refresh", async () => {
+  const published = await publishedDocument();
+  const page = await blankPage();
+  const served = await serveContent(page, {
+    ...published,
+    revision: published.revision,
+    products: published.products.map((product, index) =>
+      index === 0 ? { ...product, name: "الاسم قبل التعديل" } : product,
+    ),
+  });
+  await openSite(page);
+  await openSection(page, 1);
+  assert.match(await page.locator(".products-container").innerText(), /الاسم قبل التعديل/);
+
+  // The dashboard publishes: a newer revision with new content.
+  served.document = {
+    ...published,
+    revision: published.revision + 5,
+    products: published.products.map((product, index) =>
+      index === 0 ? { ...product, name: "الاسم بعد التعديل" } : product,
+    ),
+  };
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.waitForFunction(
+    () => document.body.innerText.includes("الاسم بعد التعديل"),
+    undefined,
+    { timeout: 10000 },
+  );
+  await page.close();
+});
+
+test("a cold load with a dead API reuses the last good content, not the bundle", async () => {
+  const published = await publishedDocument();
+  const page = await blankPage();
+  const served = await serveContent(page, {
+    ...published,
+    products: published.products.map((product, index) =>
+      index === 0 ? { ...product, name: "منتج محفوظ محليًا" } : product,
+    ),
+  });
+  await openSite(page);
+  await openSection(page, 1);
+  assert.match(await page.locator(".products-container").innerText(), /منتج محفوظ محليًا/);
+
+  // Same browser profile, API now unreachable, full reload.
+  served.mode = "offline";
+  await openSite(page);
+  await openSection(page, 1);
+  assert.match(await page.locator(".products-container").innerText(), /منتج محفوظ محليًا/);
+  await page.locator(".content-notice").waitFor({ timeout: 10000 });
+  assert.match(await page.locator(".content-notice").innerText(), /آخر نسخة محفوظة/);
+  await page.close();
+});
+
+test("a first visit with no cache and a dead API says so instead of pretending", async () => {
+  const page = await blankPage();
+  const served = await serveContent(page, {});
+  served.mode = "offline";
+  await openSite(page);
+  await page.locator(".content-notice--bundled").waitFor({ timeout: 10000 });
+  const notice = await page.locator(".content-notice").innerText();
+  assert.match(notice, /نسخة مبدئية مؤقتة/);
+  // The retry control is a real, reachable button.
+  const box = await page.getByRole("button", { name: "إعادة المحاولة" }).boundingBox();
+  assert.ok(box.height >= 44, `retry target too small: ${JSON.stringify(box)}`);
+  assert.ok(
+    box.x >= 0 && box.x + box.width <= 1280,
+    `retry button escapes the viewport: ${JSON.stringify(box)}`,
+  );
+  await page.close();
+});
+
+test("genuine product photos carry no illustrative disclaimer", async () => {
+  const published = await publishedDocument();
+  const [first, second, ...rest] = published.products;
+  const page = await blankPage();
+  await serveContent(page, {
+    ...published,
+    products: [
+      { ...first, name: "منتج بصورة حقيقية", imageAuthenticity: "genuine" },
+      { ...second, name: "منتج بصورة مؤقتة", imageAuthenticity: "illustrative" },
+      ...rest.map((product) => ({ ...product, imageAuthenticity: "genuine" })),
+    ],
+    contentStatus: {
+      ...published.contentStatus,
+      // The legacy list still names the genuine product: the explicit flag wins.
+      placeholderProductIds: [first.id, second.id],
+    },
+  });
+  await openSite(page);
+  await openSection(page, 1);
+
+  const genuine = page.locator(".product-card", { hasText: "منتج بصورة حقيقية" }).first();
+  const sample = page.locator(".product-card", { hasText: "منتج بصورة مؤقتة" }).first();
+  assert.equal(await genuine.locator(".sample-image").count(), 0);
+  assert.equal(await sample.locator(".sample-image").count(), 1);
+
+  // The product dialog must agree with the card.
+  await genuine.click();
+  const dialog = page.locator(".product-modal");
+  await dialog.waitFor({ timeout: 10000 });
+  assert.doesNotMatch(await dialog.innerText(), /الصورة توضيحية/);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+
+  await sample.click();
+  await dialog.waitFor({ timeout: 10000 });
+  assert.match(await dialog.innerText(), /الصورة توضيحية/);
+  await page.close();
+});
+
+test("genuine reviews stay genuine, including negative ones", async () => {
+  const published = await publishedDocument();
+  const page = await blankPage();
+  await serveContent(page, {
+    ...published,
+    reviews: [
+      {
+        name: "سامية محمود",
+        role: "صاحبة مطعم",
+        rating: 1.5,
+        text: "التوصيل تأخر مرتين هذا الشهر.",
+        authenticity: "genuine",
+      },
+      {
+        name: "نموذج توضيحي",
+        role: "عميل",
+        rating: 5,
+        text: "نص تجريبي في انتظار آراء حقيقية.",
+        authenticity: "illustrative",
+      },
+      {
+        name: "رأي غير مصنّف",
+        role: "عميل",
+        rating: 4,
+        text: "رأي لم يُحدَّد نوعه بعد.",
+        authenticity: "unspecified",
+      },
+    ],
+    contentStatus: {
+      ...published.contentStatus,
+      // Global switch ON: only the undecided review may follow it.
+      testimonialsArePlaceholders: true,
+    },
+  });
+  await openSite(page);
+  await openSection(page, 5);
+
+  const card = page.locator(".quote-card");
+  // 1. The genuine, badly rated review: no disclaimer, rating intact.
+  assert.match(await card.innerText(), /التوصيل تأخر مرتين/);
+  assert.equal(await card.locator(".review-placeholder").count(), 0);
+  assert.match(await card.innerText(), /1\.5 \/ 5/);
+
+  // 2. The sample review keeps its disclaimer.
+  await page.locator(".review-dots button").nth(1).click();
+  await page.waitForTimeout(400);
+  assert.equal(await card.locator(".review-placeholder").count(), 1);
+  assert.match(await card.locator(".review-placeholder").innerText(), /رأي توضيحي/);
+
+  // 3. The undecided review follows the global switch (unchanged behaviour).
+  await page.locator(".review-dots button").nth(2).click();
+  await page.waitForTimeout(400);
+  assert.equal(await card.locator(".review-placeholder").count(), 1);
+  await page.close();
+});
+
+test("legacy documents without authenticity fields keep their old labels", async () => {
+  const published = await publishedDocument();
+  const legacy = JSON.parse(JSON.stringify(published));
+  for (const product of legacy.products) delete product.imageAuthenticity;
+  for (const review of legacy.reviews) delete review.authenticity;
+  legacy.products = legacy.products.slice(0, 2);
+  legacy.products[0].name = "منتج قديم موسوم";
+  legacy.products[1].name = "منتج قديم سليم";
+  legacy.contentStatus = {
+    ...legacy.contentStatus,
+    placeholderProductIds: [legacy.products[0].id],
+    testimonialsArePlaceholders: true,
+  };
+  legacy.reviews = [
+    { name: "عميل قديم", role: "عميل", rating: 5, text: "رأي محفوظ من قبل." },
+  ];
+
+  const page = await blankPage();
+  await serveContent(page, legacy);
+  await openSite(page);
+  await openSection(page, 1);
+  const marked = page.locator(".product-card", { hasText: "منتج قديم موسوم" }).first();
+  const clean = page.locator(".product-card", { hasText: "منتج قديم سليم" }).first();
+  assert.equal(await marked.locator(".sample-image").count(), 1);
+  assert.equal(await clean.locator(".sample-image").count(), 0);
+
+  await openSection(page, 5);
+  assert.equal(await page.locator(".quote-card .review-placeholder").count(), 1);
+  await page.close();
+});

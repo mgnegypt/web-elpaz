@@ -20,16 +20,18 @@ import {
   ImageField,
   Modal,
   PageHeader,
+  SegmentedControl,
   Select,
-  Skeleton,
+  SkeletonRows,
+  StatPill,
   Switch,
   TextArea,
   TextInput,
+  Thumb,
   describeError,
   fieldErrorsOf,
   useToast,
 } from "./ui";
-import { StatPill } from "./ProductsPanel";
 
 type Draft = {
   id: number | null;
@@ -70,6 +72,7 @@ export default function EventsPanel() {
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pendingDelete, setPendingDelete] = useState<SiteEvent | null>(null);
+  const [filter, setFilter] = useState<"all" | "active" | "hidden">("all");
   const toast = useToast();
 
   const load = async () => {
@@ -86,6 +89,13 @@ export default function EventsPanel() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const visible = useMemo(() => {
+    const list = items ?? [];
+    if (filter === "active") return list.filter((item) => item.active);
+    if (filter === "hidden") return list.filter((item) => !item.active);
+    return list;
+  }, [items, filter]);
 
   const stats = useMemo(() => {
     const list = items ?? [];
@@ -182,18 +192,14 @@ export default function EventsPanel() {
       />
 
       <div className="stat-row">
-        <StatPill label="إجمالي المناسبات" value={stats.total} tone="blue" icon={<Icons.events size={16} />} />
-        <StatPill label="ظاهرة الآن" value={stats.active} tone="green" icon={<Icons.checkCircle size={16} />} />
-        <StatPill label="مجدولة" value={stats.scheduled} tone="amber" icon={<Icons.calendar size={16} />} />
+        <StatPill label="إجمالي المناسبات" value={stats.total} tone="blue" icon={<Icons.events size={18} />} />
+        <StatPill label="ظاهرة الآن" value={stats.active} tone="green" icon={<Icons.checkCircle size={18} />} />
+        <StatPill label="مجدولة" value={stats.scheduled} tone="amber" icon={<Icons.calendar size={18} />} />
       </div>
 
       {items === null ? (
         <Card title="جارٍ التحميل" icon={<Icons.events size={18} />}>
-          <div className="skeleton-lines">
-            <Skeleton height={54} radius={12} />
-            <Skeleton height={54} radius={12} />
-            <Skeleton height={54} radius={12} />
-          </div>
+          <SkeletonRows rows={3} height={64} />
         </Card>
       ) : items.length === 0 ? (
         <Card>
@@ -209,11 +215,37 @@ export default function EventsPanel() {
           />
         </Card>
       ) : (
+        <Card
+          title="كل المناسبات"
+          description={`${visible.length} من ${items.length} مناسبة`}
+          icon={<Icons.events size={18} />}
+          actions={
+            <SegmentedControl
+              label="تصفية المناسبات"
+              size="sm"
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { value: "all", label: "الكل", count: stats.total },
+                { value: "active", label: "ظاهرة", count: stats.active },
+                { value: "hidden", label: "مخفية", count: stats.total - stats.active },
+              ]}
+            />
+          }
+        >
+        {visible.length === 0 ? (
+          <EmptyState
+            compact
+            icon={<Icons.filter size={26} />}
+            title="لا توجد مناسبات بهذا الفلتر"
+            description="غيّر الفلتر لعرض باقي المناسبات."
+          />
+        ) : (
         <div className="event-list">
-          {items.map((event) => (
+          {visible.map((event) => (
             <article className={`event-card${event.active ? "" : " event-card--off"}`} key={event.id}>
               {event.imageUrl ? (
-                <img className="event-thumb" src={event.imageUrl} alt="" loading="lazy" />
+                <Thumb className="event-thumb" src={event.imageUrl} />
               ) : (
                 <span className="event-thumb event-thumb--icon">
                   <Icons.events size={22} />
@@ -267,6 +299,8 @@ export default function EventsPanel() {
             </article>
           ))}
         </div>
+        )}
+        </Card>
       )}
 
       <Modal

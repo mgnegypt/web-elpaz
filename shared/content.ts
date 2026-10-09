@@ -103,6 +103,34 @@ export const AVAILABILITY_LABELS: Record<Availability, string> = {
   coming_soon: "قريبًا",
 };
 
+/**
+ * Authenticity of a single piece of content (a product photo, a review).
+ *
+ * Three states on purpose:
+ *  - `genuine`      — an administrator confirmed this is the real thing.
+ *  - `illustrative` — an administrator marked it as a temporary stand-in.
+ *  - `unspecified`  — nobody has decided yet. Never guessed from the data
+ *    itself (a URL, an upload or a rating prove nothing); the legacy
+ *    `contentStatus` flags below decide how an unspecified record is shown,
+ *    which keeps every pre-existing document rendering exactly as before.
+ */
+export const AUTHENTICITY = ["unspecified", "genuine", "illustrative"] as const;
+export type Authenticity = (typeof AUTHENTICITY)[number];
+/** Optional everywhere: an older stored document simply reads as "unspecified". */
+export const authenticitySchema = z.enum(AUTHENTICITY).default("unspecified");
+
+export const PRODUCT_IMAGE_AUTHENTICITY_LABELS: Record<Authenticity, string> = {
+  unspecified: "لم يُحدَّد بعد",
+  genuine: "صورة المنتج الحقيقية",
+  illustrative: "صورة توضيحية مؤقتة",
+};
+
+export const REVIEW_AUTHENTICITY_LABELS: Record<Authenticity, string> = {
+  unspecified: "لم يُحدَّد بعد",
+  genuine: "رأي عميل حقيقي",
+  illustrative: "رأي توضيحي (نموذج)",
+};
+
 export const productSchema = z.object({
   id: z.number().int().positive(),
   category: text(1, 60, "التصنيف"),
@@ -127,6 +155,12 @@ export const productSchema = z.object({
   discountPercent: z.number().finite().min(0).max(90).default(0),
   /** Optional free-text badge (e.g. "عرض الموسم"); empty hides it. */
   badge: z.string().trim().max(24).default(""),
+  /**
+   * Is the picture above the product's own photo, or a stand-in?
+   * Set by an administrator in the dashboard. Missing = "unspecified", which
+   * falls back to the legacy `contentStatus.placeholderProductIds` list.
+   */
+  imageAuthenticity: authenticitySchema,
 });
 
 export const heroSlideSchema = z.object({
@@ -143,11 +177,47 @@ export const faqSchema = z.object({
   q: text(1, 200, "السؤال"),
   a: text(1, 800, "الإجابة"),
 });
+
+/**
+ * Customer rating.
+ *
+ * Decimals are first-class: 4.5 and 4.8 are valid and are stored as written.
+ * Only the range is enforced (1…5) plus a single decimal place, so the star
+ * control, a typed value and the public site always agree. 0, 5.1, -1, 10 and
+ * NaN are rejected by the schema, never silently rounded into range.
+ */
+export const RATING_MIN = 1;
+export const RATING_MAX = 5;
+/** The star control steps in halves; typed values may use one decimal. */
+export const RATING_STEP = 0.5;
+export const RATING_PRECISION_STEP = 0.1;
+
+/** Keeps one decimal place (4.5 → 4.5, 4.85 → 4.9) without changing the value's meaning. */
+export const roundRating = (value: number) => Math.round(value * 10) / 10;
+
+/** Clamps a typed number into the valid range — used by the UI, never by the schema. */
+export const clampRating = (value: number) =>
+  roundRating(Math.min(RATING_MAX, Math.max(RATING_MIN, value)));
+
+export const ratingSchema = z
+  .number({ invalid_type_error: "التقييم يجب أن يكون رقمًا بين ١ و٥" })
+  .finite({ message: "التقييم غير صالح" })
+  .min(RATING_MIN, { message: "أقل تقييم هو ١" })
+  .max(RATING_MAX, { message: "أعلى تقييم هو ٥" })
+  .transform(roundRating);
+
 export const reviewSchema = z.object({
   name: text(1, 80, "الاسم"),
   role: text(1, 80, "الصفة"),
-  rating: z.number().int().min(1).max(5),
+  rating: ratingSchema,
   text: text(1, 600, "النص"),
+  /**
+   * A real customer opinion, or a sample written to fill the section?
+   * Never derived from the rating: a genuine one-star review is still genuine.
+   * Missing = "unspecified", which falls back to the legacy
+   * `contentStatus.testimonialsArePlaceholders` switch.
+   */
+  authenticity: authenticitySchema,
 });
 export const galleryItemSchema = z.object({
   src: safeImageUrl("رابط الصورة"),
@@ -344,6 +414,54 @@ export type HeroSlide = z.infer<typeof heroSlideSchema>;
 export type Faq = z.infer<typeof faqSchema>;
 export type Review = z.infer<typeof reviewSchema>;
 export type GalleryItem = z.infer<typeof galleryItemSchema>;
+export type ContentStatus = z.infer<typeof contentStatusSchema>;
+
+/* ---------------------------------------------------------------------------
+ * Authenticity rules — one implementation, used by the public site, the
+ * dashboard preview and the tests, so the three can never disagree.
+ * -------------------------------------------------------------------------*/
+
+/**
+ * Should the "الصورة توضيحية" disclaimer appear under this product?
+ *
+ * An explicit per-product decision always wins. Only when an administrator has
+ * not decided yet do we consult the legacy id list, which is how every
+ * document written before this field existed keeps its current appearance.
+ */
+export const productImageIsIllustrative = (
+  product: Pick<Product, "id" | "imageAuthenticity">,
+  status: Pick<ContentStatus, "placeholderProductIds">,
+): boolean => {
+  if (product.imageAuthenticity === "genuine") return false;
+  if (product.imageAuthenticity === "illustrative") return true;
+  return status.placeholderProductIds.includes(product.id);
+};
+
+/**
+ * Should the "رأي توضيحي" disclaimer appear under this review?
+ *
+ * The rating is deliberately not part of the decision: a genuine complaint
+ * rated 1/5 is still a genuine customer opinion.
+ */
+export const reviewIsIllustrative = (
+  review: Pick<Review, "authenticity">,
+  status: Pick<ContentStatus, "testimonialsArePlaceholders">,
+): boolean => {
+  if (review.authenticity === "genuine") return false;
+  if (review.authenticity === "illustrative") return true;
+  return status.testimonialsArePlaceholders;
+};
+
+/** Products still shown as illustrative only because of the legacy id list. */
+export const unclassifiedIllustrativeProducts = (
+  products: Pick<Product, "id" | "name" | "imageAuthenticity">[],
+  status: Pick<ContentStatus, "placeholderProductIds">,
+) =>
+  products.filter(
+    (product) =>
+      product.imageAuthenticity === "unspecified" &&
+      status.placeholderProductIds.includes(product.id),
+  );
 
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
