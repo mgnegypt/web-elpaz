@@ -27,6 +27,7 @@ import {
   type RequestStatus,
 } from "../shared/content.ts";
 import {
+  ContentUnreadable,
   RevisionConflict,
   ensureSetupToken,
   openDb,
@@ -70,6 +71,12 @@ export type AppOptions = {
   secureCookies?: boolean;
   /** Disables per-IP throttles so the automated suites can hammer the API. */
   relaxRateLimits?: boolean;
+  /**
+   * Requests per 15 minutes allowed on GET /api/content (the public read every
+   * visitor performs). Defaults to 3000; lower it only if the deployment
+   * forwards real client IPs (TRUST_PROXY_HOPS).
+   */
+  publicReadLimit?: number;
 };
 
 const BODY_LIMIT = "512kb";
@@ -82,6 +89,7 @@ export function createApp(options: AppOptions) {
     trustProxyHops = 0,
     secureCookies = process.env.NODE_ENV === "production",
     relaxRateLimits = false,
+    publicReadLimit = 3000,
   } = options;
 
   const db: Db = openDb(dataDir);
@@ -194,6 +202,10 @@ export function createApp(options: AppOptions) {
           detail: `${req.method} ${req.path}`,
           suspicious: true,
         });
+        // Tell the caller when to come back: the public site uses this to
+        // schedule its retry instead of giving up on the content it has.
+        res.setHeader("Retry-After", String(Math.ceil(windowMs / 1000)));
+        res.setHeader("Cache-Control", "no-store");
         res.status(429).json({ error: "too-many-requests" });
       },
       standardHeaders: "draft-7",
@@ -226,6 +238,16 @@ export function createApp(options: AppOptions) {
   const writeLimiter = limiter(10 * 60 * 1000, 30);
   const loginLimiter = limiter(15 * 60 * 1000, 10);
   const uploadLimiter = limiter(15 * 60 * 1000, 60);
+  /**
+   * The public content read gets its own, much larger budget.
+   *
+   * Every visitor needs this endpoint on every page load, and behind a reverse
+   * proxy without TRUST_PROXY_HOPS all of them share a single bucket — so the
+   * generic 600/15min budget turns a busy afternoon into site-wide 429s. It
+   * still is a bounded, read-only, no-side-effect endpoint, so a high ceiling
+   * keeps the flood protection without breaking the site for real visitors.
+   */
+  const contentLimiter = limiter(15 * 60 * 1000, publicReadLimit);
 
   // --- Private paths must never be reachable ---------------------------------
   const PRIVATE = [
@@ -363,16 +385,53 @@ export function createApp(options: AppOptions) {
   });
 
   app.get("/api/health", apiLimiter, (_req, res) => {
+    const health = db.contentHealth();
+    res.setHeader("Cache-Control", "no-store");
     res.json({
       ok: true,
       status: "ok",
       service: "elban-elbaz",
       time: new Date().toISOString(),
+      // Operational facts only — no content, no secrets. Makes "which database
+      // is this process actually serving?" answerable from the outside.
+      content: {
+        readable: health.ok,
+        revision: health.revision,
+        updatedAt: health.updatedAt,
+        seededThisBoot: db.provenance.seededDefaults,
+        freshDatabase: db.provenance.createdDatabase,
+      },
     });
   });
 
-  app.get("/api/content", apiLimiter, (_req, res) => {
-    res.json({ ...db.getContent(), events: db.activeEvents() });
+  /**
+   * The public content document.
+   *
+   * `no-cache` (not `no-store`): a browser or proxy may keep a copy but must
+   * revalidate every time, so the ETag below still turns an unchanged document
+   * into a cheap 304 while a published change is never served stale.
+   */
+  app.get("/api/content", contentLimiter, (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, must-revalidate");
+    try {
+      res.json({ ...db.getContent(), events: db.activeEvents() });
+    } catch (error) {
+      if (!(error instanceof ContentUnreadable)) throw error;
+      // The stored document is the source of truth and it cannot be read:
+      // answering with bundled defaults would silently replace the owner's
+      // real content, so say "unavailable" and let the client keep its last
+      // good copy.
+      console.error(
+        `[api] stored content failed validation: ${error.issues.join(" | ")}`,
+      );
+      db.recordAudit({
+        kind: "content.unreadable",
+        detail: error.issues.slice(0, 3).join(" | "),
+        suspicious: true,
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.status(503).json({ error: "content-unavailable" });
+    }
   });
 
   app.post(
@@ -1440,10 +1499,32 @@ export function createApp(options: AppOptions) {
     product: Record<string, unknown> | null,
     /** 201 only for a genuine creation; edits and deletions are 200. */
     status: 200 | 201 = 200,
+    options: { releaseLegacyPlaceholderId?: number } = {},
   ) => {
+    const current = db.getContent();
+    /**
+     * `contentStatus.placeholderProductIds` is the legacy way of marking a
+     * photo as illustrative, and it points at product *ids*. Ids are handed
+     * out as max(id)+1, so deleting a demo product and adding a real one
+     * recycles the number and the newcomer inherits the "صورة توضيحية" label.
+     * Releasing the id whenever a product with that number is created or
+     * deleted removes the stale reference at the exact moment it would
+     * otherwise become wrong. Products explicitly marked illustrative are
+     * unaffected: they carry their own flag.
+     */
+    const legacyIds = current.contentStatus.placeholderProductIds;
+    const release = options.releaseLegacyPlaceholderId;
+    const contentStatus =
+      release !== undefined && legacyIds.includes(release)
+        ? {
+            ...current.contentStatus,
+            placeholderProductIds: legacyIds.filter((id) => id !== release),
+          }
+        : current.contentStatus;
     const parsed = contentSchema.safeParse({
-      ...db.getContent(),
+      ...current,
       products: next,
+      contentStatus,
     });
     if (!parsed.success) {
       res.status(422).json({
@@ -1482,9 +1563,10 @@ export function createApp(options: AppOptions) {
     const body = productBody(req, res);
     if (!body) return;
     const current = db.getContent();
+    const id = Math.max(0, ...current.products.map((p) => p.id)) + 1;
     const nextProduct = {
       ...(body.product as Record<string, unknown>),
-      id: Math.max(0, ...current.products.map((p) => p.id)) + 1,
+      id,
     };
     saveProducts(
       req,
@@ -1493,6 +1575,7 @@ export function createApp(options: AppOptions) {
       body.revision,
       nextProduct,
       201,
+      { releaseLegacyPlaceholderId: id },
     );
   });
 
@@ -1519,6 +1602,11 @@ export function createApp(options: AppOptions) {
         body.revision,
         { ...body.product, id },
         200,
+        // Confirming the photo as genuine also clears the stale legacy entry,
+        // so the two never contradict each other in the stored document.
+        body.product.imageAuthenticity === "genuine"
+          ? { releaseLegacyPlaceholderId: id }
+          : {},
       );
     },
   );
@@ -1545,6 +1633,8 @@ export function createApp(options: AppOptions) {
         current.products.filter((p) => p.id !== id),
         revision,
         null,
+        200,
+        { releaseLegacyPlaceholderId: id },
       );
     },
   );

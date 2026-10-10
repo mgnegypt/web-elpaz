@@ -116,7 +116,42 @@ export type Db = {
   readSetupToken: () => string | null;
   consumeSetupToken: () => void;
   close: () => void;
+  /** Absolute path of the SQLite file actually in use. */
+  file: string;
+  /**
+   * How this process found its content on startup. Deployment accidents (a
+   * second data directory, a relative DATA_DIR resolved from another working
+   * directory, a fresh volume) all look the same from the outside — the site
+   * suddenly shows the bundled demo content again — so the facts are recorded
+   * once at boot and reported in the logs and in /api/health.
+   */
+  provenance: {
+    /** The SQLite file did not exist when this process opened it. */
+    createdDatabase: boolean;
+    /** The content row was empty, so DEFAULT_CONTENT was written. */
+    seededDefaults: boolean;
+    /** Revision found at startup (1 = untouched seed). */
+    revisionAtBoot: number;
+    updatedAtBoot: string;
+  };
+  /** Cheap integrity probe for the content row; never throws. */
+  contentHealth: () => {
+    ok: boolean;
+    revision: number;
+    updatedAt: string;
+    issues: string[];
+  };
 };
+
+/** Thrown when the stored document cannot be read as valid content. */
+export class ContentUnreadable extends Error {
+  issues: string[];
+  constructor(issues: string[]) {
+    super("content-unreadable");
+    this.name = "ContentUnreadable";
+    this.issues = issues;
+  }
+}
 
 export type AdminRow = {
   id: number;
@@ -250,6 +285,8 @@ export function openDb(dataDir: string): Db {
     /* not POSIX, or not the owner */
   }
   const file = join(dataDir, "elbaz.sqlite");
+  // Recorded before the file is opened: afterwards it always exists.
+  const createdDatabase = !existsSync(file);
   const raw = new DatabaseSync(file);
   for (const name of ["elbaz.sqlite", "elbaz.sqlite-wal", "elbaz.sqlite-shm"]) {
     try {
@@ -361,17 +398,21 @@ export function openDb(dataDir: string): Db {
   const uploadsDir = join(dataDir, "uploads");
   mkdirSync(uploadsDir, { recursive: true });
 
-  // Seed exactly once. Existing published content is never overwritten by src/data.ts changes.
-  const existing = raw.prepare("SELECT COUNT(*) AS n FROM content").get() as {
-    n: number;
-  };
-  if (Number(existing.n) === 0) {
-    raw
-      .prepare(
-        "INSERT INTO content (id, json, revision, updated_at) VALUES (1, ?, 1, ?)",
-      )
-      .run(JSON.stringify(DEFAULT_CONTENT), nowIso());
-  }
+  // Seed exactly once, and only into a database that has no content row at all.
+  //
+  // This is the one place that can ever write DEFAULT_CONTENT, and it is
+  // guarded by a COUNT so a restart, a redeploy or an additive migration can
+  // never reset published content. `INSERT ... WHERE NOT EXISTS` makes the
+  // guard atomic as well, so two processes starting at the same moment cannot
+  // both decide the table is empty.
+  const seeded = raw
+    .prepare(
+      `INSERT INTO content (id, json, revision, updated_at)
+       SELECT 1, ?, 1, ?
+       WHERE NOT EXISTS (SELECT 1 FROM content WHERE id = 1)`,
+    )
+    .run(JSON.stringify(DEFAULT_CONTENT), nowIso());
+  const seededDefaults = Number(seeded.changes) > 0;
 
   const getRequest = (id: number): WholesaleRequest | null => {
     const row = raw
@@ -380,18 +421,76 @@ export function openDb(dataDir: string): Db {
     return row ? toRequest(row) : null;
   };
 
+  const contentRow = () =>
+    raw.prepare("SELECT json, revision, updated_at FROM content WHERE id = 1").get() as
+      | { json: string; revision: number; updated_at: string }
+      | undefined;
+
+  /**
+   * Reads the stored document.
+   *
+   * Validation stays strict — the site must never render a half-parsed
+   * document — but a failure is reported as ContentUnreadable with the exact
+   * field paths, so the API can answer 503 (keep your last good copy) instead
+   * of a blank 500, and the operator sees what to repair. New schema fields
+   * must always carry a `.default(...)` so an older stored document still
+   * parses; the api suite guards that.
+   */
   const getContent = (): ContentDoc => {
-    const row = raw
-      .prepare("SELECT json, revision FROM content WHERE id = 1")
-      .get() as { json: string; revision: number } | undefined;
-    if (!row) throw new Error("content-row-missing");
-    const parsed = contentSchema.parse(JSON.parse(row.json));
-    return { ...parsed, revision: Number(row.revision) };
+    const row = contentRow();
+    if (!row) throw new ContentUnreadable(["content row missing"]);
+    let data: unknown;
+    try {
+      data = JSON.parse(row.json);
+    } catch {
+      throw new ContentUnreadable(["stored content is not valid JSON"]);
+    }
+    const parsed = contentSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new ContentUnreadable(
+        parsed.error.issues
+          .slice(0, 10)
+          .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`),
+      );
+    }
+    return { ...parsed.data, revision: Number(row.revision) };
   };
+
+  const contentHealth = () => {
+    const row = contentRow();
+    if (!row)
+      return { ok: false, revision: 0, updatedAt: "", issues: ["content row missing"] };
+    try {
+      getContent();
+      return {
+        ok: true,
+        revision: Number(row.revision),
+        updatedAt: row.updated_at,
+        issues: [] as string[],
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        revision: Number(row.revision),
+        updatedAt: row.updated_at,
+        issues: error instanceof ContentUnreadable ? error.issues : ["unknown error"],
+      };
+    }
+  };
+
+  const bootRow = contentRow();
 
   return {
     raw,
     dataDir,
+    file,
+    provenance: {
+      createdDatabase,
+      seededDefaults,
+      revisionAtBoot: Number(bootRow?.revision ?? 0),
+      updatedAtBoot: bootRow?.updated_at ?? "",
+    },
+    contentHealth,
     setupTokenPath,
     uploadsDir,
     getContent,

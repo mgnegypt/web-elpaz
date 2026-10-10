@@ -7,6 +7,7 @@ import Loader from "./components/Loader";
 import MilkWave from "./components/MilkWave";
 import Header from "./components/Header";
 import Announcements from "./components/Announcements";
+import ContentNotice from "./components/ContentNotice";
 import WhatsAppFab from "./components/WhatsAppFab";
 import ThemeToggle from "./components/ThemeToggle";
 import DotsNav from "./components/DotsNav";
@@ -23,7 +24,7 @@ const Lightbox = lazy(() => import("./components/Lightbox"));
 
 export default function App() {
   const content = useContent();
-  const { source } = useContentState();
+  const { source, ready: contentReady } = useContentState();
   const [loading, setLoading] = useState(true),
     [product, setProduct] = useState<Product | null>(null),
     [lightbox, setLightbox] = useState<number | null>(null),
@@ -132,6 +133,7 @@ export default function App() {
         <span className="sr-only" aria-live="polite">
           {names[section]}
         </span>
+        <ContentNotice />
       </div>
       {isTransitioning && <MilkWave direction={waveDir} />}
       <Suspense
@@ -148,7 +150,7 @@ export default function App() {
           <Lightbox initial={lightbox} onClose={() => setLightbox(null)} />
         )}
       </Suspense>
-      {loading && <Loader onDone={doneLoading} />}
+      {loading && <Loader onDone={doneLoading} contentReady={contentReady} />}
     </>
   );
 }

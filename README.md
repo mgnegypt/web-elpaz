@@ -133,8 +133,33 @@ supports add, reorder (up/down) and remove.
 * The public site loads content on boot and refreshes when the visitor returns to a visible
   tab. The admin dashboard deliberately does **not** auto-refresh, so an editor's draft is
   never replaced under them.
-* If the API is unreachable, the public site keeps rendering the bundled defaults rather than
-  showing an empty page — but it never claims a *request* was saved when it was not.
+* **Published content always wins.** The last document the browser loaded successfully is
+  kept in `localStorage` (`src/content/contentCache.ts`) and rendered again on the next
+  visit, so a repeat visitor never sees the bundled demo content flash. The bundled
+  defaults are only ever shown to a browser that has never loaded the site before *and*
+  cannot reach the API — and in that case the site says so.
+* **A failed refresh never downgrades the page.** An error, a timeout
+  (`REQUEST_TIMEOUT_MS`, 12 s), a 429, a truncated body, an empty document or an older
+  `revision` are all rejected: the current content stays on screen, a small notice appears
+  with a *إعادة المحاولة* button, and a bounded backoff (`RETRY_DELAYS_MS` — 2 s, 4 s, 8 s,
+  16 s, then 30 s, stopping on the first success) retries in the background. Refreshes are
+  single-flight, so the boot request, a tab focus and a retry share one call.
+* If storage is unreadable the API answers `503 content-unavailable` (never the bundled
+  defaults), so a damaged database can be repaired without visitors seeing demo data.
+
+### Authenticity of photos and reviews
+
+Products carry `imageAuthenticity` and reviews carry `authenticity`, each one of
+`unspecified` / `genuine` / `illustrative` (`shared/content.ts`). The admin sets them in
+plain Arabic from **المنتجات** (صورة المنتج → *هل الصورة حقيقية؟*) and from **المحتوى →
+الآراء والأسئلة** (*نوع الرأي*).
+
+* `genuine` → no disclaimer. `illustrative` → the disclaimer is shown.
+* `unspecified` (every document written before this field existed) falls back to the old
+  global switches — `contentStatus.placeholderProductIds` and
+  `contentStatus.testimonialsArePlaceholders` — so existing content keeps rendering exactly
+  as it did. Nothing is bulk-marked genuine, and a rating never affects authenticity: a
+  genuine 1.5/5 complaint stays genuine.
 
 ---
 
@@ -266,6 +291,13 @@ Coverage highlights:
   rejection, cross-origin rejection, first-run setup (wrong token, short password, token
   deletion, no repeat, hashed password), session protection, CSRF, revoked sessions, URL-scheme
   rejection, seed-once semantics, revision conflicts, headers.
+* **Content availability** — the public read is revalidated (`no-cache, must-revalidate`)
+  and never served stale, a restart on an existing database re-seeds nothing, unreadable
+  storage answers `503` instead of demo content, documents written before the authenticity
+  fields existed still load, and the public read keeps its own rate-limit budget.
+* **Authenticity** — explicit flags win over the legacy lists, a recycled product id cannot
+  inherit a deleted product's "illustrative" label, genuine photos and genuine reviews
+  (including a 1.5/5 one) carry no disclaimer, and legacy documents keep their old labels.
 * **Browser** — five viewports (360×640, 390×844, 768×1024, 1440×900, 844×390 landscape), no
   horizontal overflow, bottom utility dock, 44px touch targets, carousel, filtering, gallery,
   FAQ, dialogs, focus trap, section navigation, the wholesale form, light/dark theming
@@ -324,8 +356,10 @@ These are **not** verified production content. Replace them before launch:
 * Products **5–9** reuse other products' photos. Local `.webp` packaging shots in
   `public/images/` are AI-generated illustrations, not official photography. Some product
   images are hosted on Catbox (`files.catbox.moe`).
-* Statistics, reviews and gallery images are placeholders. The dashboard's content-status flags
-  keep the on-screen "illustrative" notices visible until they are switched off.
+* Statistics, reviews and gallery images are placeholders. The on-screen "illustrative"
+  notices stay visible until each product photo and each review is classified in the
+  dashboard (or the old global switches are turned off). Items the owner has not classified
+  yet are listed in **المحتوى → حالة المحتوى**, so nothing is silently presented as genuine.
 * All FAQs, policies, quality claims, delivery and payment terms need owner confirmation.
 
 ---
