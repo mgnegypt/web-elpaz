@@ -6,6 +6,10 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { launchBrowser } from "./browser.mjs";
 import { DASHBOARD_OWNER } from "./helper.mjs";
+import {
+  productImageIsIllustrative,
+  reviewIsIllustrative,
+} from "../shared/content.ts";
 
 const base = process.env.TEST_URL || "http://127.0.0.1:5173";
 const api = process.env.TEST_API || "http://127.0.0.1:3001";
@@ -872,5 +876,137 @@ test("dashboard: dark/light toggle persists, and every breakpoint stays usable",
   }
 
   assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test("owner: everything waiting for a decision is classified from one screen", async () => {
+  const { page, errors } = await openAdmin();
+  await signIn(page, OWNER.email, OWNER.password, OWNER.answer);
+
+  await goTo(page, "محتوى الموقع");
+  await page
+    .getByRole("tab", { name: "حالة المحتوى" })
+    .click({ timeout: 15000 });
+
+  const productsCard = page.locator(".card", {
+    hasText: "صور المنتجات بانتظار المراجعة",
+  });
+  const reviewsCard = page.locator(".card", {
+    hasText: "آراء بانتظار المراجعة",
+  });
+  await productsCard.waitFor({ timeout: 15000 });
+
+  // The site starts with legacy items waiting: that is the bug the owner sees.
+  const waitingProducts = await productsCard.locator(".classify-list li").count();
+  const waitingReviews = await reviewsCard.locator(".classify-list li").count();
+  assert.ok(waitingProducts > 0, "the legacy products must be listed, not hidden");
+  assert.ok(waitingReviews > 0, "the undecided reviews must be listed");
+  await shot(page, "admin-20-content-status");
+
+  // One decision for the whole list — behind an explicit confirmation.
+  await productsCard
+    .getByRole("button", { name: "كلها صور منتجاتي الحقيقية" })
+    .click();
+  const confirm = page.locator(".ui-modal");
+  await confirm.waitFor({ timeout: 10000 });
+  assert.match(await confirm.innerText(), /لن يتغيّر شيء على الموقع قبل الضغط/);
+  await page.getByRole("button", { name: "نعم، طبّق على القائمة" }).click();
+  await confirm.waitFor({ state: "detached", timeout: 10000 });
+
+  await reviewsCard.getByRole("button", { name: "كلها آراء عملاء حقيقية" }).click();
+  await confirm.waitFor({ timeout: 10000 });
+  await page.getByRole("button", { name: "نعم، طبّق على القائمة" }).click();
+  await confirm.waitFor({ state: "detached", timeout: 10000 });
+
+  // Both queues are empty in the draft, and nothing is live yet.
+  await productsCard
+    .getByText("لا توجد منتجات بانتظار المراجعة")
+    .waitFor({ timeout: 10000 });
+  await reviewsCard
+    .getByText("لا توجد آراء بانتظار المراجعة")
+    .waitFor({ timeout: 10000 });
+  const stillLive = await (await fetch(`${api}/api/content`)).json();
+  assert.ok(
+    stillLive.products.some((product) => product.imageAuthenticity === "unspecified"),
+    "a decision must not reach the site before it is published",
+  );
+
+  await page
+    .locator(".save-bar")
+    .getByRole("button", { name: "نشر التعديلات" })
+    .click();
+  await page.getByText("تم التحديث على الموقع.").waitFor({ timeout: 20000 });
+
+  const publishedDoc = await (await fetch(`${api}/api/content`)).json();
+
+  // Exactly the waiting items were decided — and only them.
+  const wasWaiting = stillLive.products
+    .filter(
+      (product) =>
+        product.imageAuthenticity === "unspecified" &&
+        stillLive.contentStatus.placeholderProductIds.includes(product.id),
+    )
+    .map((product) => product.id);
+  assert.equal(wasWaiting.length, waitingProducts, "the queue matched the stored document");
+  for (const id of wasWaiting) {
+    const product = publishedDoc.products.find((item) => item.id === id);
+    assert.equal(product.imageAuthenticity, "genuine", `product ${id} is now decided`);
+  }
+  const untouched = stillLive.products.filter((product) => !wasWaiting.includes(product.id));
+  for (const before of untouched) {
+    const product = publishedDoc.products.find((item) => item.id === before.id);
+    assert.equal(
+      product.imageAuthenticity,
+      before.imageAuthenticity,
+      `product ${before.id} was not in the queue and must keep its own setting`,
+    );
+  }
+  assert.ok(
+    publishedDoc.products.every(
+      (product) => !productImageIsIllustrative(product, publishedDoc.contentStatus),
+    ),
+    "no product is shown as illustrative any more",
+  );
+  assert.ok(
+    publishedDoc.reviews.every(
+      (review) => !reviewIsIllustrative(review, publishedDoc.contentStatus),
+    ),
+    "no review is shown as illustrative any more",
+  );
+  assert.ok(
+    publishedDoc.reviews.every((review) => review.authenticity === "genuine"),
+    "the owner's reviews are marked genuine",
+  );
+  // Classification is not editing: texts and ratings are exactly as before.
+  assert.deepEqual(
+    publishedDoc.reviews.map((review) => review.rating),
+    stillLive.reviews.map((review) => review.rating),
+    "ratings must not change when authenticity is set",
+  );
+  assert.deepEqual(
+    publishedDoc.products.map((product) => [product.name, product.img]),
+    stillLive.products.map((product) => [product.name, product.img]),
+    "names and image URLs must not change when authenticity is set",
+  );
+
+  // And the visitor finally sees the site without the disclaimers.
+  const { page: visitor } = await openSite();
+  await siteGo(visitor, 1);
+  assert.equal(
+    await visitor.locator(".sample-image").count(),
+    0,
+    "no product keeps the illustrative label after the decision",
+  );
+  await siteGo(visitor, 5);
+  assert.equal(
+    await visitor.locator(".review-placeholder").count(),
+    0,
+    "no review keeps the illustrative label after the decision",
+  );
+  await shot(visitor, "admin-21-site-after-classification");
+
+  await assertLayoutSane(page, "content status (desktop)");
+  assert.deepEqual(errors, []);
+  await visitor.close();
   await page.close();
 });

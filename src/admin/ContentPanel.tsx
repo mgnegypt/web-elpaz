@@ -7,6 +7,7 @@ import {
   REVIEW_AUTHENTICITY_LABELS,
   reviewIsIllustrative,
   unclassifiedIllustrativeProducts,
+  unclassifiedIllustrativeReviews,
   type Authenticity,
   type Content,
   type ContentDoc,
@@ -19,6 +20,7 @@ import {
   Button,
   Card,
   ColorField,
+  ConfirmDialog,
   Disclosure,
   Field,
   Grid,
@@ -39,6 +41,16 @@ import {
   moveItem,
   useToast,
 } from "./ui";
+
+/**
+ * A one-step decision taken from «حالة المحتوى»: it classifies everything that
+ * is still waiting, instead of making the owner open every single card.
+ * Nothing is ever decided automatically — the owner picks, confirms, publishes.
+ */
+type BulkAction = {
+  target: "products" | "reviews";
+  value: Exclude<Authenticity, "unspecified">;
+};
 
 type TabKey =
   | "identity"
@@ -104,6 +116,8 @@ export default function ContentPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState<ContentDoc | null>(null);
+  /** Which bulk classification the owner is being asked to confirm. */
+  const [bulkAsk, setBulkAsk] = useState<BulkAction | null>(null);
   const toast = useToast();
 
   // Re-sync only when the server hands us a different revision.
@@ -128,6 +142,20 @@ export default function ContentPanel({
     [draft.products, draft.contentStatus],
   );
 
+  /**
+   * Reviews that carry the "رأي توضيحي" note only because the global switch is
+   * on and nobody has classified them yet. Their position travels with them so
+   * a decision patches exactly the right review.
+   */
+  const legacyPlaceholderReviews = useMemo(
+    () =>
+      unclassifiedIllustrativeReviews(
+        draft.reviews.map((review, index) => ({ ...review, index })),
+        draft.contentStatus,
+      ),
+    [draft.reviews, draft.contentStatus],
+  );
+
   // Report unsaved changes so the shell never overwrites them from a live update.
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -141,6 +169,47 @@ export default function ContentPanel({
   /** Replaces one entry of a typed list without touching the others. */
   const mapList = <T,>(list: T[], index: number, change: (item: T) => T) =>
     list.map((item, i) => (i === index ? change(item) : item));
+
+  /** Records an image decision; every other product field stays as it was. */
+  const classifyImages = (ids: number[], value: Authenticity) =>
+    patch(
+      "products",
+      draft.products.map((product) =>
+        ids.includes(product.id)
+          ? { ...product, imageAuthenticity: value }
+          : product,
+      ),
+    );
+
+  /** Records a review decision. Ratings and texts are never touched. */
+  const classifyReviews = (indexes: number[], value: Authenticity) =>
+    patch(
+      "reviews",
+      draft.reviews.map((review, index) =>
+        indexes.includes(index) ? { ...review, authenticity: value } : review,
+      ),
+    );
+
+  const bulkCount =
+    bulkAsk?.target === "products"
+      ? legacyPlaceholderProducts.length
+      : legacyPlaceholderReviews.length;
+
+  const applyBulk = () => {
+    if (!bulkAsk) return;
+    if (bulkAsk.target === "products")
+      classifyImages(
+        legacyPlaceholderProducts.map((product) => product.id),
+        bulkAsk.value,
+      );
+    else
+      classifyReviews(
+        legacyPlaceholderReviews.map((review) => review.index),
+        bulkAsk.value,
+      );
+    setBulkAsk(null);
+    toast.push("info", "تم التحديد. اضغط «نشر التعديلات» ليظهر على الموقع.");
+  };
 
   const save = async () => {
     setBusy(true);
@@ -1076,9 +1145,9 @@ export default function ContentPanel({
         </Card>
 
         <Card
-          title="صور المنتجات التوضيحية"
+          title="صور المنتجات بانتظار المراجعة"
           icon={<Icons.image size={18} />}
-          description="تنبيه «الصورة توضيحية» يُضبط الآن لكل منتج من صفحة المنتجات."
+          description="هذه المنتجات تعرض للزائر تنبيه «الصورة توضيحية». حدّد لكل منها — أو لها كلها دفعة واحدة — إن كانت الصورة صورة المنتج الحقيقية."
         >
           {legacyPlaceholderProducts.length === 0 ? (
             <Notice
@@ -1093,20 +1162,145 @@ export default function ContentPanel({
               <Notice
                 tone="warn"
                 icon={<Icons.info size={16} />}
-                title="منتجات تعرض تنبيه «الصورة توضيحية» من إعداد قديم"
+                title={`${legacyPlaceholderProducts.length} منتج يعرض تنبيه «الصورة توضيحية» من إعداد قديم`}
               >
-                افتح كل منتج من صفحة «المنتجات» وحدّد «نوع الصورة»: صورة المنتج
-                الحقيقية أو صورة توضيحية مؤقتة. لم نقرّر نيابة عنك حتى لا يُوصف
-                منتج حقيقي بالخطأ.
+                لم نقرّر نيابة عنك حتى لا يُوصف منتج حقيقي بالخطأ. اختر لكل منتج،
+                أو استخدم القرار الجماعي إن كانت صور القائمة كلها من نوع واحد.
               </Notice>
+              <div className="classify-bulk">
+                <span className="classify-bulk-label">
+                  قرار واحد لكل القائمة:
+                </span>
+                <Button
+                  size="sm"
+                  icon={<Icons.check size={14} />}
+                  onClick={() =>
+                    setBulkAsk({ target: "products", value: "genuine" })
+                  }
+                >
+                  كلها صور منتجاتي الحقيقية
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<Icons.info size={14} />}
+                  onClick={() =>
+                    setBulkAsk({ target: "products", value: "illustrative" })
+                  }
+                >
+                  كلها صور توضيحية مؤقتة
+                </Button>
+              </div>
               <ul className="classify-list">
                 {legacyPlaceholderProducts.map((product) => (
                   <li key={product.id}>
                     <Icons.image size={15} />
                     <span>{product.name}</span>
-                    <Badge tone="amber" size="sm">
-                      صورة توضيحية
-                    </Badge>
+                    <span className="classify-actions">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<Icons.check size={14} />}
+                        onClick={() => classifyImages([product.id], "genuine")}
+                      >
+                        صورة حقيقية
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<Icons.info size={14} />}
+                        onClick={() =>
+                          classifyImages([product.id], "illustrative")
+                        }
+                      >
+                        صورة توضيحية
+                      </Button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Card>
+
+        <Card
+          title="آراء بانتظار المراجعة"
+          icon={<Icons.star size={18} />}
+          description="هذه الآراء تعرض تنبيه «رأي توضيحي» بسبب الإعداد العام أعلاه. التقييم لا يدخل في القرار: رأي حقيقي بتقييم منخفض يبقى حقيقيًا."
+        >
+          {legacyPlaceholderReviews.length === 0 ? (
+            <Notice
+              tone="success"
+              icon={<Icons.check size={16} />}
+              title="لا توجد آراء بانتظار المراجعة"
+            >
+              كل رأي يعرض ما حدّدته في خانة «نوع الرأي» داخل تبويب «الآراء
+              والأسئلة».
+            </Notice>
+          ) : (
+            <>
+              <Notice
+                tone="warn"
+                icon={<Icons.info size={16} />}
+                title={`${legacyPlaceholderReviews.length} رأي يظهر الآن كرأي توضيحي`}
+              >
+                علّم الآراء التي كتبتها نقلًا عن عملاء حقيقيين. لا تعلّم رأيًا
+                كتبته كنموذج للعرض.
+              </Notice>
+              <div className="classify-bulk">
+                <span className="classify-bulk-label">
+                  قرار واحد لكل القائمة:
+                </span>
+                <Button
+                  size="sm"
+                  icon={<Icons.check size={14} />}
+                  onClick={() =>
+                    setBulkAsk({ target: "reviews", value: "genuine" })
+                  }
+                >
+                  كلها آراء عملاء حقيقية
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<Icons.info size={14} />}
+                  onClick={() =>
+                    setBulkAsk({ target: "reviews", value: "illustrative" })
+                  }
+                >
+                  كلها نماذج توضيحية
+                </Button>
+              </div>
+              <ul className="classify-list">
+                {legacyPlaceholderReviews.map((review) => (
+                  <li key={review.index}>
+                    <Icons.star size={15} />
+                    <span>
+                      {review.name}
+                      <small className="classify-note">{review.text}</small>
+                    </span>
+                    <span className="classify-actions">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<Icons.check size={14} />}
+                        onClick={() =>
+                          classifyReviews([review.index], "genuine")
+                        }
+                      >
+                        رأي حقيقي
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<Icons.info size={14} />}
+                        onClick={() =>
+                          classifyReviews([review.index], "illustrative")
+                        }
+                      >
+                        رأي توضيحي
+                      </Button>
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -1114,6 +1308,34 @@ export default function ContentPanel({
           )}
         </Card>
       </TabPanel>
+
+      <ConfirmDialog
+        open={bulkAsk !== null}
+        danger={false}
+        title={
+          bulkAsk?.target === "products"
+            ? "تأكيد تصنيف الصور"
+            : "تأكيد تصنيف الآراء"
+        }
+        message={
+          bulkAsk?.value === "genuine"
+            ? bulkAsk.target === "products"
+              ? `سيتم اعتبار صور ${bulkCount} منتج صورًا حقيقية، ويختفي تنبيه «الصورة توضيحية» عنها.`
+              : `سيتم اعتبار ${bulkCount} رأي آراء عملاء حقيقية، ويختفي تنبيه «رأي توضيحي» عنها.`
+            : bulkAsk?.target === "products"
+              ? `سيظهر تنبيه «الصورة توضيحية» على ${bulkCount} منتج.`
+              : `سيظهر تنبيه «رأي توضيحي» على ${bulkCount} رأي.`
+        }
+        detail={
+          <p>
+            لن يتغيّر شيء على الموقع قبل الضغط على «نشر التعديلات». يمكنك تعديل
+            أي عنصر بعدها بشكل منفصل.
+          </p>
+        }
+        confirmLabel="نعم، طبّق على القائمة"
+        onConfirm={applyBulk}
+        onCancel={() => setBulkAsk(null)}
+      />
 
       <StickySaveBar
         dirty={dirty}

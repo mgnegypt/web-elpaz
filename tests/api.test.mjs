@@ -1719,3 +1719,216 @@ test("a throttled public read asks the client to come back instead of failing op
     await strict.close();
   }
 });
+
+/* -------------------------------------------------------------------------
+ * Updating a live site: the database it already has must come through the
+ * upgrade untouched, and decimal ratings must survive every hop.
+ * ---------------------------------------------------------------------- */
+
+test("an existing production database survives the update and repeated restarts", async () => {
+  const live = await startTestServer({ preserve: true });
+  const dataDir = live.dataDir;
+
+  // A document shaped like the one the live site is serving today: written by
+  // a build that had no authenticity fields, with the owner's own logo,
+  // uploaded photos, hand-written reviews and whole-number ratings.
+  const production = JSON.parse(JSON.stringify(DEFAULT_CONTENT));
+  for (const product of production.products) delete product.imageAuthenticity;
+  for (const review of production.reviews) delete review.authenticity;
+  production.site.logoUrl = "/uploads/9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f.png";
+  production.products[0].img = "/uploads/aaaaaaaabbbbbbbbccccccccdddddddd.jpg";
+  production.products[0].webp = "/uploads/aaaaaaaabbbbbbbbccccccccdddddddd.webp";
+  production.products[1].img = "https://files.catbox.moe/abcdef.jpg";
+  production.reviews = [
+    { name: "أ. محمود", role: "صاحب سوبر ماركت", rating: 5, text: "تعامل ممتاز والتوصيل في معاده." },
+    { name: "سامية", role: "ربة منزل", rating: 2, text: "الطلب وصل متأخر مرتين." },
+  ];
+  production.contentStatus.placeholderProductIds = [5, 6, 7, 8, 9];
+  production.contentStatus.testimonialsArePlaceholders = true;
+
+  const storedJson = JSON.stringify(production);
+  const storedAt = "2026-03-01T10:00:00.000Z";
+  try {
+    live.db.raw
+      .prepare("UPDATE content SET json = ?, revision = 42, updated_at = ? WHERE id = 1")
+      .run(storedJson, storedAt);
+  } finally {
+    await live.close();
+  }
+
+  try {
+    // Three cold starts: a deploy, a crash restart, and a server reboot.
+    for (const attempt of [1, 2, 3]) {
+      const booted = await startTestServer({ dataDir, preserve: true });
+      try {
+        const content = (await booted.request("/api/content")).body;
+        const health = (await booted.request("/api/health")).body;
+        const where = `restart ${attempt}`;
+
+        assert.equal(health.content.seededThisBoot, false, `${where}: nothing may be re-seeded`);
+        assert.equal(health.content.freshDatabase, false, `${where}: the database is not new`);
+        assert.equal(content.revision, 42, `${where}: the revision must not move`);
+        assert.equal(content.site.logoUrl, production.site.logoUrl, `${where}: the logo survives`);
+        assert.equal(content.products.length, production.products.length, `${where}: product count`);
+        assert.equal(content.products[0].img, production.products[0].img, `${where}: uploaded photo`);
+        assert.equal(content.products[0].webp, production.products[0].webp, `${where}: webp source`);
+        assert.equal(content.products[1].img, production.products[1].img, `${where}: remote photo`);
+        assert.deepEqual(
+          content.reviews.map((review) => [review.name, review.rating, review.text]),
+          production.reviews.map((review) => [review.name, review.rating, review.text]),
+          `${where}: the owner's reviews are returned exactly as written`,
+        );
+
+        // The fields this update adds are filled in while reading, as the
+        // neutral "not decided yet" value — never as a claim either way.
+        for (const product of content.products)
+          assert.equal(product.imageAuthenticity, "unspecified", `${where}: product default`);
+        for (const review of content.reviews)
+          assert.equal(review.authenticity, "unspecified", `${where}: review default`);
+        assert.deepEqual(content.contentStatus.placeholderProductIds, [5, 6, 7, 8, 9]);
+        assert.equal(content.contentStatus.testimonialsArePlaceholders, true);
+      } finally {
+        await booted.close();
+      }
+    }
+
+    // Nothing was written back: the stored row is byte-for-byte what it was,
+    // so going back to the previous build needs no data work at all.
+    const after = await startTestServer({ dataDir, preserve: true });
+    try {
+      const row = after.db.raw
+        .prepare("SELECT json, revision, updated_at FROM content WHERE id = 1")
+        .get();
+      assert.equal(row.json, storedJson, "the stored document must not be rewritten on boot");
+      assert.equal(Number(row.revision), 42);
+      assert.equal(row.updated_at, storedAt, "even the timestamp stays untouched");
+      assert.ok(
+        !row.json.includes("imageAuthenticity") && !row.json.includes('"authenticity"'),
+        "no new field is persisted until an administrator saves",
+      );
+    } finally {
+      await after.close();
+    }
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("decimal ratings survive saving, serving and a restart without rounding", async () => {
+  const fresh = await startTestServer({ preserve: true, relaxRateLimits: true });
+  const dataDir = fresh.dataDir;
+  const typed = [4.5, 4.8, 3.7, 1.2, 5];
+  try {
+    const { session } = await setupOwner(fresh);
+    const csrf = { "x-csrf-token": session.body.csrf };
+    const current = (await fresh.request("/api/admin/content")).body;
+    const reviews = typed.map((rating, index) => ({
+      name: `عميل ${index + 1}`,
+      role: "عميل",
+      rating,
+      text: `رأي رقم ${index + 1} مكتوب بخط صاحب المحل.`,
+      authenticity: "genuine",
+    }));
+
+    const saved = await fresh.json(
+      "/api/admin/content",
+      "PUT",
+      { ...current, revision: current.revision, reviews },
+      csrf,
+    );
+    assert.equal(saved.status, 200);
+    assert.deepEqual(saved.body.reviews.map((review) => review.rating), typed);
+
+    const published = (await fresh.request("/api/content")).body;
+    assert.deepEqual(published.reviews.map((review) => review.rating), typed);
+
+    const row = fresh.db.raw.prepare("SELECT json FROM content WHERE id = 1").get();
+    assert.deepEqual(JSON.parse(row.json).reviews.map((review) => review.rating), typed);
+    assert.match(row.json, /"rating":4\.5\b/, "4.5 is stored as 4.5, not as 5");
+
+    // One decimal place is the published precision: 2.75 is recorded as 2.8,
+    // and a half step is never pushed up to the next whole star.
+    const quantised = await fresh.json(
+      "/api/admin/content",
+      "PUT",
+      {
+        ...current,
+        revision: saved.body.revision,
+        reviews: [{ ...reviews[0], rating: 2.75 }, { ...reviews[1], rating: 4.5 }],
+      },
+      csrf,
+    );
+    assert.equal(quantised.status, 200);
+    assert.deepEqual(quantised.body.reviews.map((review) => review.rating), [2.8, 4.5]);
+
+    // Out-of-range values are still refused.
+    for (const rating of [0.9, 5.4, Number.NaN]) {
+      const rejected = await fresh.json(
+        "/api/admin/content",
+        "PUT",
+        { ...current, revision: quantised.body.revision, reviews: [{ ...reviews[0], rating }] },
+        csrf,
+      );
+      assert.equal(rejected.status, 422, `rating ${rating} must be refused`);
+    }
+  } finally {
+    await fresh.close();
+  }
+
+  // A restart must not change a single decimal.
+  const reopened = await startTestServer({ dataDir });
+  try {
+    const content = (await reopened.request("/api/content")).body;
+    assert.deepEqual(content.reviews.map((review) => review.rating), [2.8, 4.5]);
+  } finally {
+    await reopened.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("the review queue lists exactly what the owner still has to decide", async () => {
+  const { unclassifiedIllustrativeProducts, unclassifiedIllustrativeReviews, reviewIsIllustrative } =
+    await import("../shared/content.ts");
+
+  const status = { placeholderProductIds: [5, 6], testimonialsArePlaceholders: true };
+  const products = [
+    { id: 5, name: "جبنة", imageAuthenticity: "unspecified" },
+    { id: 6, name: "زبادي", imageAuthenticity: "genuine" },
+    { id: 7, name: "عسل", imageAuthenticity: "unspecified" },
+  ];
+  const reviews = [
+    { name: "منى", rating: 5, authenticity: "unspecified" },
+    { name: "خالد", rating: 1, authenticity: "genuine" },
+    { name: "نموذج", rating: 4, authenticity: "illustrative" },
+  ];
+
+  // Only items that actually show a disclaimer today, and only those whose
+  // label comes from a legacy setting rather than from a decision.
+  assert.deepEqual(
+    unclassifiedIllustrativeProducts(products, status).map((product) => product.id),
+    [5],
+  );
+  assert.deepEqual(
+    unclassifiedIllustrativeReviews(reviews, status).map((review) => review.name),
+    ["منى"],
+  );
+
+  // Settling the queue removes the disclaimer and touches nothing else.
+  const settled = reviews.map((review) =>
+    review.authenticity === "unspecified" ? { ...review, authenticity: "genuine" } : review,
+  );
+  assert.deepEqual(unclassifiedIllustrativeReviews(settled, status), []);
+  assert.equal(reviewIsIllustrative(settled[0], status), false);
+  assert.equal(settled[0].rating, 5, "a classification never edits the rating");
+  assert.equal(reviewIsIllustrative(settled[2], status), true, "samples stay samples");
+
+  // With the global switch off nothing is pending: unspecified reviews are
+  // already shown without a disclaimer, so the dashboard must not nag.
+  assert.deepEqual(
+    unclassifiedIllustrativeReviews(reviews, {
+      ...status,
+      testimonialsArePlaceholders: false,
+    }),
+    [],
+  );
+});

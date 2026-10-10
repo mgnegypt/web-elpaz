@@ -453,15 +453,32 @@ export const reviewIsIllustrative = (
 };
 
 /** Products still shown as illustrative only because of the legacy id list. */
-export const unclassifiedIllustrativeProducts = (
-  products: Pick<Product, "id" | "name" | "imageAuthenticity">[],
+export const unclassifiedIllustrativeProducts = <
+  T extends Pick<Product, "id" | "imageAuthenticity">,
+>(
+  products: T[],
   status: Pick<ContentStatus, "placeholderProductIds">,
-) =>
+): T[] =>
   products.filter(
     (product) =>
       product.imageAuthenticity === "unspecified" &&
       status.placeholderProductIds.includes(product.id),
   );
+
+/**
+ * Reviews still shown as illustrative only because the global
+ * `testimonialsArePlaceholders` switch is on and nobody has classified them.
+ * These are the ones the dashboard offers to settle in one step.
+ */
+export const unclassifiedIllustrativeReviews = <
+  T extends Pick<Review, "authenticity">,
+>(
+  reviews: T[],
+  status: Pick<ContentStatus, "testimonialsArePlaceholders">,
+): T[] =>
+  status.testimonialsArePlaceholders
+    ? reviews.filter((review) => review.authenticity === "unspecified")
+    : [];
 
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
