@@ -49,6 +49,29 @@ const OWNER_NAV = [
 
 const RAIL_KEY = "elbaz-admin-rail";
 
+/**
+ * The collapsed-sidebar preference is a convenience, never a requirement.
+ * Reading `localStorage` can throw outright — blocked site data, private
+ * mode, an iframe with a different origin — so the dashboard must open with
+ * the default rather than fail to render. Same shape as `src/theme/theme.ts`.
+ */
+function readStoredRail(): boolean {
+  try {
+    return localStorage.getItem(RAIL_KEY) === "1";
+  } catch {
+    // Storage disabled: start expanded, exactly like a first visit.
+    return false;
+  }
+}
+
+function storeRail(collapsed: boolean) {
+  try {
+    localStorage.setItem(RAIL_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* keep working without persistence */
+  }
+}
+
 function Dashboard() {
   const toast = useToast();
   const [session, setSession] = useState<AdminSession | null>(null);
@@ -60,9 +83,7 @@ function Dashboard() {
   const [contentDirty, setContentDirty] = useState(false);
   const [staleRevision, setStaleRevision] = useState<number | null>(null);
   // Desktop rail: a narrower sidebar that still shows a label under each icon.
-  const [rail, setRail] = useState(
-    () => localStorage.getItem(RAIL_KEY) === "1",
-  );
+  const [rail, setRail] = useState(readStoredRail);
   const dirtyRef = useRef(false);
   const mainRef = useRef<HTMLElement>(null);
 
@@ -81,7 +102,7 @@ function Dashboard() {
   }, [contentDirty]);
 
   useEffect(() => {
-    localStorage.setItem(RAIL_KEY, rail ? "1" : "0");
+    storeRail(rail);
   }, [rail]);
 
   // Escape closes the off-canvas menu wherever focus happens to be.

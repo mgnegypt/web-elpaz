@@ -42,10 +42,30 @@ async function openAdmin(options = {}) {
   });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  if (options.blockStorage) await blockStorage(page);
   await page.route("https://files.catbox.moe/**", (route) => route.abort());
   await page.route("https://fonts.googleapis.com/**", (route) => route.abort());
   await page.goto(`${base}/admin`);
   return { page, errors };
+}
+
+/**
+ * Reproduces a browser with site data blocked: touching `localStorage` at all
+ * throws SecurityError, which is what Chrome does when cookies are blocked for
+ * the site (and Safari did in private mode). Reading a key is not enough to
+ * reproduce it — the property access itself must fail.
+ */
+async function blockStorage(page) {
+  await page.addInitScript(() => {
+    const deny = () => {
+      throw new DOMException("access is denied for this document", "SecurityError");
+    };
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get: deny,
+      set: deny,
+    });
+  });
 }
 
 async function shot(page, name) {
@@ -1008,5 +1028,60 @@ test("owner: everything waiting for a decision is classified from one screen", a
   await assertLayoutSane(page, "content status (desktop)");
   assert.deepEqual(errors, []);
   await visitor.close();
+  await page.close();
+});
+
+test("dashboard: a browser with site data blocked still opens and signs in", async () => {
+  const { page, errors } = await openAdmin({ blockStorage: true });
+
+  // The storage really is denied — otherwise this test would prove nothing.
+  const storageState = await page.evaluate(() => {
+    try {
+      window.localStorage.getItem("probe");
+      return "readable";
+    } catch (error) {
+      return error.name;
+    }
+  });
+  assert.equal(storageState, "SecurityError", "the test must run without storage");
+
+  // 1. The login screen renders instead of a blank page.
+  await page
+    .getByRole("button", { name: "دخول لوحة التحكم" })
+    .waitFor({ timeout: 20000 });
+  assert.equal(
+    await page.locator(".auth-card, .auth-screen").count() > 0,
+    true,
+    "the sign-in screen must be visible",
+  );
+
+  // 2. Signing in works, so the dashboard itself renders without storage.
+  await signIn(page, OWNER.email, OWNER.password, OWNER.answer);
+  await page.getByRole("navigation", { name: "أقسام اللوحة" }).waitFor({ timeout: 20000 });
+
+  // 3. The sidebar preference still toggles; it just cannot be remembered.
+  const shell = page.locator(".admin-shell");
+  assert.equal(await shell.getAttribute("data-rail"), "false", "defaults to expanded");
+  await page.locator(".sidebar-rail-toggle").first().click();
+  await page.waitForTimeout(300);
+  assert.equal(await shell.getAttribute("data-rail"), "true", "collapsing still works");
+
+  // 4. Moving around the dashboard keeps working.
+  await goTo(page, "محتوى الموقع");
+  await page
+    .getByRole("heading", { name: "محتوى الموقع", exact: true })
+    .waitFor({ timeout: 15000 });
+
+  // 5. After a reload the preference is simply the default again — no crash.
+  await page.reload();
+  await page.getByRole("navigation", { name: "أقسام اللوحة" }).waitFor({ timeout: 20000 });
+  assert.equal(
+    await page.locator(".admin-shell").getAttribute("data-rail"),
+    "false",
+    "without storage the rail falls back to the default instead of failing",
+  );
+
+  await assertLayoutSane(page, "dashboard without localStorage");
+  assert.deepEqual(errors, []);
   await page.close();
 });
