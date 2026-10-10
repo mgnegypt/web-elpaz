@@ -138,11 +138,12 @@ supports add, reorder (up/down) and remove.
   visit, so a repeat visitor never sees the bundled demo content flash. The bundled
   defaults are only ever shown to a browser that has never loaded the site before *and*
   cannot reach the API — and in that case the site says so.
-* **A failed refresh never downgrades the page.** An error, a timeout (8 s), a 429, a
-  truncated body, an empty document or an older `revision` are all rejected: the current
-  content stays on screen, a small notice appears with a *إعادة المحاولة* button, and a
-  bounded backoff (2 s → 5 s → 15 s → 30 s, stopping on success) retries in the background.
-  Refreshes are single-flight, so the boot request, a tab focus and a retry share one call.
+* **A failed refresh never downgrades the page.** An error, a timeout
+  (`REQUEST_TIMEOUT_MS`, 12 s), a 429, a truncated body, an empty document or an older
+  `revision` are all rejected: the current content stays on screen, a small notice appears
+  with a *إعادة المحاولة* button, and a bounded backoff (`RETRY_DELAYS_MS` — 2 s, 4 s, 8 s,
+  16 s, then 30 s, stopping on the first success) retries in the background. Refreshes are
+  single-flight, so the boot request, a tab focus and a retry share one call.
 * If storage is unreadable the API answers `503 content-unavailable` (never the bundled
   defaults), so a damaged database can be repaired without visitors seeing demo data.
 
