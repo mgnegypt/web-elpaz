@@ -494,9 +494,12 @@
     width: 40px;
     height: 40px;
   }
+  /* 32px is the floor this project holds every tappable control to on a touch
+     screen, so a tablet or a landscape phone gets the same track as a phone
+     rather than the tighter mouse size. */
   .dash .switch {
-    width: 52px;
-    height: 30px;
+    width: 56px;
+    height: 32px;
   }
   .dash .icon-option {
     min-height: 76px;
