@@ -15,6 +15,7 @@ const dataDir = process.env.TEST_DATA_DIR;
 let browser;
 let admin;
 let seeded;
+let original;
 
 /** A cookie-aware client for the API server this suite shares with the browser. */
 function createClient() {
@@ -114,6 +115,7 @@ async function signIn(client) {
 async function publishShopFixture(client, csrf) {
   const current = await client.request("/api/admin/content");
   const document = current.body;
+  original = document;
   const products = document.products.map((product, index) => {
     if (index === 0)
       return { ...product, price: 120, discountPercent: 0, availability: "available", quantity: 8 };
@@ -159,6 +161,18 @@ before(async () => {
 
 after(async () => {
   await browser?.close();
+  // `npm test` runs every suite against one database, so this suite puts the
+  // catalogue back exactly as it found it (no prices, no stock, no zones).
+  // Otherwise the sold-out fixture would change what the other suites see.
+  if (original && admin?.csrf) {
+    const current = await admin.request("/api/admin/content");
+    await admin.json(
+      "/api/admin/content",
+      "PUT",
+      { ...original, revision: current.body?.revision ?? original.revision },
+      { "x-csrf-token": admin.csrf },
+    );
+  }
 });
 
 async function openShop({ width = 1280, height = 900 } = {}) {
