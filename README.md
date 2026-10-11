@@ -182,6 +182,69 @@ honeypot, malformed payload, oversized body.
 
 ---
 
+## 7b. Online store (cart, checkout, orders)
+
+The shop is **off until the owner gives a product a price**: `price` is `null` by default,
+and a product without a published price is shown as «السعر عند الطلب» and can only be
+ordered through WhatsApp/phone, exactly as before. Nothing in the catalogue is priced
+automatically.
+
+**What the owner controls** (dashboard → *محتوى الموقع → المتجر والتوصيل*, published with the
+rest of the content document):
+
+| Setting | Meaning | Default |
+| --- | --- | --- |
+| `ordersEnabled` | Master switch for the cart/checkout | `true` |
+| `currency` | Text shown next to every amount | `ج.م` |
+| `codEnabled` | Cash on delivery is offered | `false` |
+| `deliveryZones[]` | Areas actually served, with the real fee each | empty |
+| `freeDeliveryOver` | Subtotal that makes delivery free | `null` |
+| `minOrderTotal` | Smallest accepted subtotal (0 = none) | `0` |
+| `checkoutNote` | Owner's note on the checkout page | empty |
+| `whatsappSummary` | Offer a prefilled WhatsApp summary after an order | `true` |
+
+While `deliveryZones` is empty the storefront says **«رسوم التوصيل تُحدَّد عند تأكيد الطلب»**
+and the order stores `shipping = null`. No fee is ever invented.
+
+**Pricing is server-side.** `priceOrder()` in `shared/orders.ts` is the single implementation
+used by the browser (to show a cart) and by Express (to store an order). The browser sends
+only product ids and quantities; prices, discounts, delivery and totals are always recomputed
+from the stored catalogue. A client-sent `total` is ignored.
+
+**Order creation** — `POST /api/orders` runs one SQLite transaction (`BEGIN IMMEDIATE`) that
+re-reads the catalogue, validates every line, reserves stock by writing the decremented
+quantities back into the content document under its `revision` compare-and-set guard, then
+inserts `orders` / `order_items` / `order_events`. Anything that fails rolls the whole thing
+back, so a confirmation page is only ever shown for an order that genuinely exists.
+
+* **Idempotency** — each checkout carries a `requestKey`; a repeat returns the same order,
+  and the same key with different contents is a `409`.
+* **Stock** — only products with a tracked `quantity` are decremented; cancelling an order
+  returns exactly what it was holding, once (`stock_held`).
+* **Statuses** — `pending → confirmed → preparing → out_for_delivery → delivered`, plus
+  `cancelled` from any live state. The allowed moves live in `ORDER_STATUS_TRANSITIONS`
+  (`shared/orders.ts`) and are enforced by the server, not by the UI.
+* **Receipt privacy** — the reference (`EB-YYMMDD-XXXXX`) is not enough to open an order. A
+  random access token is issued once at creation, only its SHA-256 hash is stored, and
+  `GET /api/orders/:reference?token=…` compares in constant time. `/order` and `/checkout`
+  send `X-Robots-Tag: noindex` and are disallowed in `robots.txt`.
+* **Receipts are order receipts**, printable from the browser (`window.print()`), and are
+  explicitly **not** Egyptian tax invoices.
+* **WhatsApp** — an optional button that opens a chat with a prefilled summary (reference,
+  items, totals; never the address). The order is already stored; opening WhatsApp neither
+  sends nor confirms anything, and order creation never depends on it.
+* **No payment gateway.** Checkout records either «الدفع عند الاستلام» (when the owner
+  enabled it) or «يُتفق عليه عند تأكيد الطلب». No card data is collected anywhere. Adding a
+  provider later means implementing it behind `paymentMethod` with real credentials.
+
+**Dashboard** — *الطلبات* lists every order with search, status filter, a detail drawer
+(items, delivery data, status history), the valid next steps only, payment marking, and
+analytics computed from stored orders: total, pending, revenue (**sum of all non-cancelled
+order totals, delivery included**), last 7 days, best sellers, and low stock from the
+catalogue.
+
+---
+
 ## 8. Theme (light / dark)
 
 * First visit follows the system preference (`prefers-color-scheme`).
@@ -278,7 +341,9 @@ runner starts both for you.
 
 ```bash
 npm run build        # type-check + production build
-npm run test:api     # backend + security (no browser needed)
+npm run test:api     # backend + orders (no browser needed)
+npm run test:orders  # order pipeline only: pricing, stock, idempotency, workflow
+npm run test:shop    # browser: add to cart → checkout → real order → receipt
 npm test             # browser / layout / theme / transition
 npm run test:admin   # admin dashboard integration
 npm run test:all     # everything
@@ -305,6 +370,17 @@ Coverage highlights:
   preservation), the milk wave in both directions, and dev-server privacy.
 * **Admin** — first-run setup, login/logout, protected endpoints, request search, status change,
   deletion, product create/edit/delete, content publishing, revision conflicts.
+* **Orders** (`tests/orders.test.mjs`, 15 cases) — catalogue pricing wins over anything the
+  client sends, stock is reserved and restored, unpriced products cannot be bought, repeated
+  request keys never duplicate an order, Egyptian phone formats, delivery zones and the
+  free-delivery threshold, minimum order, the master switch, COD only when enabled, token-only
+  order retrieval (no internal fields, no staff notes), admin authorisation, the transition
+  table, revenue excluding cancelled orders, and a document saved before `commerce` existed
+  still loading.
+* **Shop** (`tests/shop.test.mjs`) — in a real browser: prices and add-to-cart appear only for
+  priced, in-stock products; the basket survives a reload; checkout creates an order that the
+  dashboard really lists; the receipt matches the stored totals; an order link without its
+  token shows nothing.
 
 ---
 

@@ -144,6 +144,15 @@ export const productSchema = z.object({
   webp: safeImageUrl("رابط WebP"),
   color: hexColor.default("#f3e3c3"),
   // ---- orderability / stock (all optional so pre-existing content still loads) ----
+  /**
+   * Selling price per unit, set by the owner in the dashboard.
+   *
+   * `null` means "no published price": the product is shown with
+   * «السعر عند الطلب» and can only be ordered through WhatsApp/phone, never
+   * added to the cart. A price is never guessed or back-filled — it has to be
+   * entered by the business.
+   */
+  price: z.number().finite().min(0).max(1_000_000).nullable().default(null),
   availability: z.enum(AVAILABILITY).default("available"),
   /** null means "not tracked" (e.g. unlimited). */
   quantity: z.number().finite().min(0).max(1_000_000).nullable().default(null),
@@ -342,6 +351,56 @@ export const seoSchema = z.object({
 });
 
 /** The full editable document, minus the database-managed revision. */
+/* -------------------------------------------------------------- commerce */
+
+/**
+ * A delivery area the business actually serves, with the fee it actually
+ * charges. The list starts empty on purpose: until the owner adds a zone, the
+ * storefront says the delivery fee is agreed when the order is confirmed
+ * instead of inventing one.
+ */
+export const deliveryZoneSchema = z.object({
+  id: z.string().trim().min(1).max(40),
+  name: text(1, 60, "اسم المنطقة"),
+  fee: z.number().finite().min(0).max(100_000),
+  note: z.string().trim().max(120).default(""),
+});
+
+export const commerceSchema = z
+  .object({
+    /**
+     * Master switch for online ordering. Even when on, a product only becomes
+     * purchasable once it has a price, so switching this on cannot by itself
+     * put an unpriced catalogue on sale.
+     */
+    ordersEnabled: z.boolean().default(true),
+    currency: z.string().trim().min(1).max(10).default("ج.م"),
+    /**
+     * Cash on delivery is a business policy, so it stays off until the owner
+     * turns it on. While off, checkout records «يُتفق عليه عند تأكيد الطلب».
+     */
+    codEnabled: z.boolean().default(false),
+    deliveryZones: z.array(deliveryZoneSchema).max(60).default([]),
+    /** Subtotal at or above which delivery is free. null = no such offer. */
+    freeDeliveryOver: z
+      .number()
+      .finite()
+      .min(0)
+      .max(1_000_000)
+      .nullable()
+      .default(null),
+    /** Smallest subtotal the business accepts. 0 = no minimum. */
+    minOrderTotal: z.number().finite().min(0).max(1_000_000).default(0),
+    /** Owner-written note shown at checkout (delivery times, areas, …). */
+    checkoutNote: z.string().trim().max(400).default(""),
+    /** Offer a prefilled WhatsApp summary after the order is created. */
+    whatsappSummary: z.boolean().default(true),
+  })
+  .default({});
+
+export type Commerce = z.infer<typeof commerceSchema>;
+export type DeliveryZone = z.infer<typeof deliveryZoneSchema>;
+
 export const contentSchema = z.object({
   site: siteSchema,
   hero: z.object({
@@ -368,6 +427,7 @@ export const contentSchema = z.object({
     .max(12),
   contentStatus: contentStatusSchema,
   seo: seoSchema,
+  commerce: commerceSchema,
 });
 
 export type Content = z.infer<typeof contentSchema>;

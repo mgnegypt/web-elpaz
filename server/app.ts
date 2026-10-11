@@ -7,6 +7,7 @@ import express, {
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { z } from "zod";
 import { existsSync } from "node:fs";
 import { join, sep } from "node:path";
 import {
@@ -28,12 +29,22 @@ import {
 } from "../shared/content.ts";
 import {
   ContentUnreadable,
+  InvalidStatusTransition,
+  OrderRejected,
   RevisionConflict,
   ensureSetupToken,
   openDb,
   type AdminRow,
   type Db,
 } from "./db.ts";
+import {
+  ORDER_STATUSES,
+  orderDraftSchema,
+  priceOrder,
+  type Order,
+  type OrderStatus,
+  type PublicOrder,
+} from "../shared/orders.ts";
 import {
   SESSION_COOKIE,
   createSession,
@@ -479,6 +490,194 @@ export function createApp(options: AppOptions) {
       }
     },
   );
+
+  /* ------------------------------------------------------------- orders */
+
+  /**
+   * What a customer may read back about their own order. Internal fields —
+   * the row id, the IP we logged, who moved the status and any staff note —
+   * never leave the server.
+   */
+  const publicOrder = (order: Order): PublicOrder => {
+    const { id: _id, history, ...rest } = order;
+    return {
+      ...rest,
+      history: history.map((entry) => ({ status: entry.status, at: entry.at })),
+    };
+  };
+
+  const orderRejectionResponse = (error: OrderRejected) => {
+    switch (error.code) {
+      case "orders-disabled":
+        return {
+          status: 503,
+          body: {
+            error: "orders-disabled",
+            message: "الطلب أونلاين غير مُفعَّل حاليًا. تواصل معنا على واتساب.",
+          },
+        };
+      case "items":
+        return {
+          status: 409,
+          body: {
+            error: "items-changed",
+            message: "تغيّرت بعض المنتجات في السلة. راجع التفاصيل وحدّث طلبك.",
+            problems: error.problems,
+          },
+        };
+      case "below-minimum":
+        return {
+          status: 422,
+          body: {
+            error: "below-minimum",
+            message: `الحد الأدنى للطلب ${error.detail}`,
+            minimum: Number(error.detail),
+          },
+        };
+      case "zone-required":
+        return {
+          status: 422,
+          body: { error: "zone-required", message: "اختر منطقة التوصيل." },
+        };
+      case "payment-unavailable":
+        return {
+          status: 422,
+          body: {
+            error: "payment-unavailable",
+            message: "طريقة الدفع المختارة غير متاحة حاليًا.",
+          },
+        };
+      default:
+        return {
+          status: 422,
+          body: { error: "empty-order", message: "السلة فارغة." },
+        };
+    }
+  };
+
+  /**
+   * Re-prices a basket against the live catalogue. The cart calls this before
+   * showing a total so a stale localStorage basket is corrected in place, and
+   * the answer is advisory only: `POST /api/orders` prices everything again.
+   */
+  app.post("/api/cart/price", writeLimiter, requireSameOrigin, (req, res) => {
+    const parsed = z
+      .object({
+        items: z
+          .array(
+            z.object({
+              productId: z.number().int().positive(),
+              quantity: z.number().int().min(1).max(99),
+            }),
+          )
+          .max(40),
+        deliveryZoneId: z.string().trim().max(40).default(""),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-request" });
+      return;
+    }
+    try {
+      const content = db.getContent();
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        ordersEnabled: content.commerce.ordersEnabled,
+        priced: priceOrder(
+          parsed.data.items,
+          content.products,
+          content.commerce,
+          { deliveryZoneId: parsed.data.deliveryZoneId },
+        ),
+      });
+    } catch {
+      res.status(503).json({ error: "content-unavailable" });
+    }
+  });
+
+  app.post("/api/orders", writeLimiter, requireSameOrigin, (req, res) => {
+    const parsed = orderDraftSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({
+        error: "invalid-request",
+        details: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+    if (parsed.data.honeypot) {
+      // A bot filled the hidden field. Answer like a validation error and
+      // never create anything.
+      db.recordAudit({
+        kind: "order.honeypot",
+        ip: req.ip ?? "",
+        detail: "hidden field filled",
+        suspicious: true,
+      });
+      res.status(422).json({ error: "invalid-request" });
+      return;
+    }
+    try {
+      const { order, created, conflict, accessToken } = db.createOrder({
+        ...parsed.data,
+        ip: req.ip ?? "",
+      });
+      if (conflict) {
+        res.status(409).json({ error: "request-key-conflict" });
+        return;
+      }
+      if (created) {
+        // Stock moved, so every open page should refresh its catalogue.
+        hub.broadcast({ type: "content", revision: db.getContent().revision });
+        hub.broadcast({ type: "events" });
+        db.recordAudit({
+          kind: "order.created",
+          ip: req.ip ?? "",
+          detail: `${order.reference} · ${order.itemCount} صنف`,
+        });
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.status(created ? 201 : 200).json({
+        ok: true,
+        duplicate: !created,
+        reference: order.reference,
+        // The token is returned once, to the browser that placed the order.
+        accessToken,
+        order: publicOrder(order),
+      });
+    } catch (error) {
+      if (error instanceof OrderRejected) {
+        const { status, body } = orderRejectionResponse(error);
+        res.status(status).json(body);
+        return;
+      }
+      if (error instanceof RevisionConflict) {
+        res.status(409).json({
+          error: "busy",
+          message: "حدث تعديل على المنتجات في نفس اللحظة. حاول مرة أخرى.",
+        });
+        return;
+      }
+      // Never tell the visitor an order exists when it does not.
+      res.status(500).json({ error: "persistence-failed" });
+    }
+  });
+
+  /**
+   * Customer order lookup. The reference alone is not enough: the token
+   * issued at creation must match, so an order link cannot be guessed and
+   * references are never enumerable.
+   */
+  app.get("/api/orders/:reference", contentLimiter, (req, res) => {
+    const token = String(req.query.token ?? "");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    const order = db.getOrderByReference(req.params.reference, token);
+    if (!order) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    res.json({ order: publicOrder(order) });
+  });
 
   // --- Session helpers -------------------------------------------------------
   type Session = NonNullable<ReturnType<typeof readSession>>;
@@ -1639,6 +1838,105 @@ export function createApp(options: AppOptions) {
     },
   );
 
+  /* --------------------------------------------------- admin · orders */
+
+  admin.get("/orders", (req, res) => {
+    const limit = Math.min(
+      100,
+      Math.max(1, Number.parseInt(String(req.query.limit ?? "25"), 10) || 25),
+    );
+    const offset = Math.max(
+      0,
+      Number.parseInt(String(req.query.offset ?? "0"), 10) || 0,
+    );
+    const status = String(req.query.status ?? "");
+    const { items, total } = db.listOrders({
+      search: String(req.query.search ?? ""),
+      status: (ORDER_STATUSES as readonly string[]).includes(status)
+        ? status
+        : "",
+      limit,
+      offset,
+    });
+    res.json({ items, total, limit, offset, stats: db.orderStats() });
+  });
+
+  admin.get("/orders/:id", (req, res) => {
+    const order = db.getOrder(Number.parseInt(req.params.id, 10));
+    if (!order) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    res.json({ order });
+  });
+
+  admin.patch("/orders/:id", requireCsrf, requireProfileComplete, (req, res) => {
+    const actorRow = res.locals.admin as AdminRow;
+    const parsed = z
+      .object({
+        status: z.enum(ORDER_STATUSES).optional(),
+        paymentStatus: z.enum(["unpaid", "paid"]).optional(),
+        note: z.string().trim().max(300).default(""),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-request" });
+      return;
+    }
+    const id = Number.parseInt(req.params.id, 10);
+    const current = db.getOrder(id);
+    if (!current) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    const actor = {
+      id: actorRow.id,
+      name: actorRow.display_name || actorRow.username,
+    };
+    try {
+      let order = current;
+      if (parsed.data.status && parsed.data.status !== current.status) {
+        order = db.setOrderStatus(
+          id,
+          parsed.data.status as OrderStatus,
+          actor,
+          parsed.data.note,
+        );
+        audit(req, "order.status", {
+          actor: actorRow,
+          detail: `${order.reference}: ${current.status} → ${order.status}`,
+        });
+      }
+      if (
+        parsed.data.paymentStatus &&
+        parsed.data.paymentStatus !== current.paymentStatus
+      ) {
+        order = db.setOrderPayment(id, parsed.data.paymentStatus, actor);
+        audit(req, "order.payment", {
+          actor: actorRow,
+          detail: `${order.reference}: ${parsed.data.paymentStatus}`,
+        });
+      }
+      // Cancelling returns stock to the catalogue, so refresh open pages.
+      hub.broadcast({ type: "content", revision: db.getContent().revision });
+      res.json({ order });
+    } catch (error) {
+      if (error instanceof InvalidStatusTransition) {
+        res.status(409).json({
+          error: "invalid-transition",
+          from: error.from,
+          to: error.to,
+        });
+        return;
+      }
+      if (error instanceof RevisionConflict) {
+        res.status(409).json({ error: "revision-conflict" });
+        return;
+      }
+      res.status(500).json({ error: "update-failed" });
+    }
+  });
+
   app.use("/api/admin", admin);
 
   app.use("/api", (_req, res) => res.status(404).json({ error: "not-found" }));
@@ -1706,7 +2004,11 @@ export function createApp(options: AppOptions) {
       }),
     );
     // SPA fallback: the public site and /admin both resolve to index.html.
-    app.get("*", (_req, res) => {
+    app.get("*", (req, res) => {
+      // A customer's order page and the checkout are private: tell crawlers
+      // so even a shared link never ends up in a search index.
+      if (/^\/(order|checkout|admin)(\/|$)/.test(req.path))
+        res.setHeader("X-Robots-Tag", "noindex, nofollow");
       res.sendFile(join(distDir, "index.html"));
     });
   }

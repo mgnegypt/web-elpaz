@@ -54,6 +54,7 @@ type BulkAction = {
 
 type TabKey =
   | "identity"
+  | "store"
   | "hero"
   | "sections"
   | "showcase"
@@ -62,6 +63,7 @@ type TabKey =
 
 const TABS: { key: TabKey; label: string; icon: ReactNode }[] = [
   { key: "identity", label: "الهوية والتواصل", icon: <Icons.store size={16} /> },
+  { key: "store", label: "المتجر والتوصيل", icon: <Icons.boxes size={16} /> },
   { key: "hero", label: "الواجهة الرئيسية", icon: <Icons.image size={16} /> },
   { key: "sections", label: "النصوص والأقسام", icon: <Icons.text size={16} /> },
   { key: "showcase", label: "المعرض والأرقام", icon: <Icons.images size={16} /> },
@@ -236,6 +238,7 @@ export default function ContentPanel({
   };
 
   const site = draft.site;
+  const commerce = draft.commerce;
   const hero = draft.hero;
   const copy = draft.copy;
 
@@ -456,6 +459,178 @@ export default function ContentPanel({
       </TabPanel>
 
       {/* -------------------------------------------------------- the hero */}
+
+      {/* --------------------------------------------- store and delivery */}
+      <TabPanel tabKey="store" active={tab === "store"}>
+        <Card
+          title="الطلب أونلاين"
+          icon={<Icons.boxes size={18} />}
+          description="يتحكم في ظهور السلة وصفحة إتمام الطلب على الموقع."
+        >
+          <Switch
+            checked={commerce.ordersEnabled}
+            onChange={(ordersEnabled) => patch("commerce", { ...commerce, ordersEnabled })}
+            label="تفعيل الطلب أونلاين"
+            hint="المنتج يظهر للشراء فقط إذا كان له سعر منشور وكمية متاحة. بدون سعر يظل الطلب عبر واتساب كما هو."
+          />
+          <Grid columns={2}>
+            <Field label="عملة العرض" hint="تظهر بجوار كل سعر.">
+              <TextInput
+                value={commerce.currency}
+                onChange={(currency) => patch("commerce", { ...commerce, currency })}
+                maxLength={10}
+              />
+            </Field>
+            <Field
+              label="الحد الأدنى للطلب"
+              hint="٠ يعني بدون حد أدنى."
+            >
+              <TextInput
+                value={String(commerce.minOrderTotal)}
+                onChange={(value) =>
+                  patch("commerce", {
+                    ...commerce,
+                    minOrderTotal: Number(value) || 0,
+                  })
+                }
+                type="number"
+                inputMode="decimal"
+                dir="ltr"
+                min={0}
+              />
+            </Field>
+          </Grid>
+          <Switch
+            checked={commerce.codEnabled}
+            onChange={(codEnabled) => patch("commerce", { ...commerce, codEnabled })}
+            label="الدفع عند الاستلام متاح"
+            hint="فعّله فقط إذا كان النشاط يقبل الدفع نقدًا عند التسليم. عند إيقافه يُسجَّل الطلب بـ«يُتفق عليه عند التأكيد»."
+          />
+          <Switch
+            checked={commerce.whatsappSummary}
+            onChange={(whatsappSummary) =>
+              patch("commerce", { ...commerce, whatsappSummary })
+            }
+            label="عرض زر إرسال ملخص الطلب على واتساب"
+            hint="يفتح محادثة بملخص الطلب. الطلب مسجّل لدينا في كل الأحوال، وفتح المحادثة ليس تأكيدًا تلقائيًا."
+          />
+          <Field
+            label="ملاحظة تظهر في صفحة إتمام الطلب (اختيارية)"
+            hint="مثال: مواعيد التوصيل أو تعليمات الاستلام."
+          >
+            <TextArea
+              value={commerce.checkoutNote}
+              onChange={(checkoutNote) => patch("commerce", { ...commerce, checkoutNote })}
+              maxLength={400}
+              rows={2}
+            />
+          </Field>
+        </Card>
+
+        <Card
+          title="مناطق التوصيل ورسومها"
+          icon={<Icons.truck size={18} />}
+          description="أضف المناطق التي تخدمها فعليًا ورسوم التوصيل الحقيقية لكل منطقة. ما دامت القائمة فارغة، تظهر للعميل عبارة «رسوم التوصيل تُحدَّد عند تأكيد الطلب» ولا يُفرض أي رقم."
+        >
+          {commerce.deliveryZones.map((zone, index) => (
+            <ItemCard
+              key={zone.id}
+              index={index}
+              total={commerce.deliveryZones.length}
+              title={zone.name || "منطقة جديدة"}
+              subtitle={`${zone.fee} ${commerce.currency}`}
+              onMove={(from, to) =>
+                patch("commerce", {
+                  ...commerce,
+                  deliveryZones: moveItem(commerce.deliveryZones, from, to),
+                })
+              }
+              onRemove={() =>
+                patch("commerce", {
+                  ...commerce,
+                  deliveryZones: commerce.deliveryZones.filter((_, i) => i !== index),
+                })
+              }
+              removeLabel={`حذف ${zone.name}`}
+            >
+              <Grid columns={2}>
+                <Field label="اسم المنطقة" required>
+                  <TextInput
+                    value={zone.name}
+                    onChange={(name) =>
+                      patch("commerce", {
+                        ...commerce,
+                        deliveryZones: mapList(commerce.deliveryZones, index, (item) => ({
+                          ...item,
+                          name,
+                        })),
+                      })
+                    }
+                    maxLength={60}
+                  />
+                </Field>
+                <Field label="رسوم التوصيل" required>
+                  <TextInput
+                    value={String(zone.fee)}
+                    onChange={(value) =>
+                      patch("commerce", {
+                        ...commerce,
+                        deliveryZones: mapList(commerce.deliveryZones, index, (item) => ({
+                          ...item,
+                          fee: Number(value) || 0,
+                        })),
+                      })
+                    }
+                    type="number"
+                    inputMode="decimal"
+                    dir="ltr"
+                    min={0}
+                  />
+                </Field>
+              </Grid>
+            </ItemCard>
+          ))}
+          <AddItemButton
+            label="إضافة منطقة توصيل"
+            onClick={() =>
+              patch("commerce", {
+                ...commerce,
+                deliveryZones: [
+                  ...commerce.deliveryZones,
+                  {
+                    id: `zone-${Date.now().toString(36)}`,
+                    name: "",
+                    fee: 0,
+                    note: "",
+                  },
+                ],
+              })
+            }
+          />
+          <Field
+            label="توصيل مجاني عند تجاوز (اختياري)"
+            hint="اتركه فارغًا لإلغاء العرض. يُطبَّق على قيمة الطلب قبل التوصيل."
+          >
+            <TextInput
+              value={
+                commerce.freeDeliveryOver === null ? "" : String(commerce.freeDeliveryOver)
+              }
+              onChange={(value) =>
+                patch("commerce", {
+                  ...commerce,
+                  freeDeliveryOver: value.trim() === "" ? null : Number(value) || 0,
+                })
+              }
+              type="number"
+              inputMode="decimal"
+              dir="ltr"
+              min={0}
+            />
+          </Field>
+        </Card>
+      </TabPanel>
+
+
       <TabPanel tabKey="hero" active={tab === "hero"}>
         <Card
           title="نصوص الواجهة"

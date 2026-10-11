@@ -12,11 +12,13 @@
     "preview": "vite preview --host 0.0.0.0",
     "test": "node scripts/test.mjs site",
     "test:api": "node scripts/test.mjs api",
+    "test:orders": "node scripts/test.mjs orders",
     "test:admin": "node scripts/test.mjs admin",
     "test:all": "node scripts/test.mjs all",
     "test:capture": "node tests/capture.mjs",
     "test:security": "node scripts/test.mjs security",
-    "test:layout": "node scripts/test.mjs layout"
+    "test:layout": "node scripts/test.mjs layout",
+    "test:shop": "node scripts/test.mjs shop"
   },
   "dependencies": {
     "@fontsource/cairo": "^5.3.0",

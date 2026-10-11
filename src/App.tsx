@@ -12,6 +12,8 @@ import WhatsAppFab from "./components/WhatsAppFab";
 import ThemeToggle from "./components/ThemeToggle";
 import DotsNav from "./components/DotsNav";
 import ProgressTop from "./components/ProgressTop";
+import ProductJsonLd from "./components/ProductJsonLd";
+import { useCart } from "./cart/CartContext";
 const Products = lazy(() => import("./components/Products"));
 const WhyUs = lazy(() => import("./components/WhyUs"));
 const About = lazy(() => import("./components/About"));
@@ -21,16 +23,18 @@ const Faq = lazy(() => import("./components/Faq"));
 const Contact = lazy(() => import("./components/Contact"));
 const ProductModal = lazy(() => import("./components/ProductModal"));
 const Lightbox = lazy(() => import("./components/Lightbox"));
+const CartDrawer = lazy(() => import("./components/CartDrawer"));
 
 export default function App() {
   const content = useContent();
+  const cart = useCart();
   const { source, ready: contentReady } = useContentState();
   const [loading, setLoading] = useState(true),
     [product, setProduct] = useState<Product | null>(null),
     [lightbox, setLightbox] = useState<number | null>(null),
     [menu, setMenu] = useState(false);
   const { section, goTo, isTransitioning, waveDir } = useSectionNav(
-    loading || !!product || lightbox !== null,
+    loading || !!product || lightbox !== null || cart.isOpen,
     menu,
   );
   const doneLoading = useCallback(() => setLoading(false), []);
@@ -134,6 +138,7 @@ export default function App() {
           {names[section]}
         </span>
         <ContentNotice />
+        <ProductJsonLd />
       </div>
       {isTransitioning && <MilkWave direction={waveDir} />}
       <Suspense
@@ -144,8 +149,13 @@ export default function App() {
         }
       >
         {product && (
-          <ProductModal product={product} onClose={() => setProduct(null)} />
+          <ProductModal
+            product={product}
+            onClose={() => setProduct(null)}
+            onSelect={setProduct}
+          />
         )}{" "}
+        {cart.isOpen && <CartDrawer />}{" "}
         {lightbox !== null && (
           <Lightbox initial={lightbox} onClose={() => setLightbox(null)} />
         )}

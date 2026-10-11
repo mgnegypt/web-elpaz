@@ -8,9 +8,11 @@ import {
   adminApi,
   type AdminSession,
   type AuditEntry,
+  type OrdersPage,
   type RequestsPage,
   type SiteEvent,
 } from "./api";
+import { formatMoney } from "../../shared/orders.ts";
 import { clockTime, gregorianDate, hijriDate, shortDateTime } from "./dates";
 import { Icons } from "./icons";
 import {
@@ -51,6 +53,10 @@ export default function OverviewPanel({
     state: "loading",
     data: [],
   });
+  const [orders, setOrders] = useState<Loadable<OrdersPage | null>>({
+    state: "loading",
+    data: null,
+  });
 
   const isOwner = session.capabilities.manageAdmins;
 
@@ -77,6 +83,12 @@ export default function OverviewPanel({
       setRequests({ state: "ready", data: result });
     } catch {
       setRequests({ state: "error", data: null });
+    }
+    try {
+      const result = await adminApi.orders({ limit: 5 });
+      setOrders({ state: "ready", data: result });
+    } catch {
+      setOrders({ state: "error", data: null });
     }
     if (!isOwner) {
       setActivity({ state: "ready", data: [] });
@@ -223,6 +235,47 @@ export default function OverviewPanel({
           tone="red"
           icon={<Icons.truck size={18} />}
           onClick={() => onNavigate("requests")}
+        />
+      </div>
+
+      {/* Store figures, straight from the stored orders. */}
+      <div className="stat-row">
+        <StatPill
+          label="طلبات المتجر"
+          value={orders.state === "loading" ? "…" : (orders.data?.stats.total ?? 0)}
+          tone="blue"
+          icon={<Icons.store size={18} />}
+          onClick={() => onNavigate("orders")}
+        />
+        <StatPill
+          label="بانتظار التأكيد"
+          value={
+            orders.state === "loading" ? "…" : (orders.data?.stats.byStatus.pending ?? 0)
+          }
+          tone="amber"
+          icon={<Icons.bell size={18} />}
+          onClick={() => onNavigate("orders")}
+        />
+        <StatPill
+          label="الإيرادات (عدا الملغي)"
+          value={
+            orders.state === "loading"
+              ? "…"
+              : formatMoney(
+                  orders.data?.stats.revenue ?? 0,
+                  orders.data?.stats.currency || content.commerce.currency,
+                )
+          }
+          tone="green"
+          icon={<Icons.trend size={18} />}
+          onClick={() => onNavigate("orders")}
+        />
+        <StatPill
+          label="طلبات آخر 7 أيام"
+          value={orders.state === "loading" ? "…" : (orders.data?.stats.last7Days ?? 0)}
+          tone="violet"
+          icon={<Icons.calendar size={18} />}
+          onClick={() => onNavigate("orders")}
         />
       </div>
 

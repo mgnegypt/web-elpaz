@@ -1,5 +1,10 @@
 User-agent: *
 Allow: /
 
+# Private pages: a customer's own order and the dashboard must never be indexed.
+Disallow: /admin
+Disallow: /checkout
+Disallow: /order
+
 # TODO: replace with the production domain.
 Sitemap: https://YOUR-DOMAIN/sitemap.xml

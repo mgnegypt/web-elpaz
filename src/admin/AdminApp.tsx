@@ -20,6 +20,7 @@ import { Skeleton, ToastProvider, useToast } from "./ui";
 import AuthScreen from "./AuthScreen";
 import OverviewPanel from "./OverviewPanel";
 import ProductsPanel from "./ProductsPanel";
+import OrdersPanel from "./OrdersPanel";
 import ContentPanel from "./ContentPanel";
 import EventsPanel from "./EventsPanel";
 import RequestsPanel from "./RequestsPanel";
@@ -37,6 +38,7 @@ type AuthStart = {
 const NAV = [
   { key: "overview", label: "نظرة عامة", icon: "dashboard" },
   { key: "products", label: "المنتجات", icon: "package" },
+  { key: "orders", label: "الطلبات", icon: "store" },
   { key: "events", label: "المناسبات", icon: "events" },
   { key: "content", label: "محتوى الموقع", icon: "palette" },
   { key: "requests", label: "طلبات الجملة", icon: "truck" },
@@ -474,6 +476,7 @@ function Dashboard() {
                 categories={content.categories}
               />
             )}
+            {tab === "orders" && <OrdersPanel content={content} />}
             {tab === "events" && <EventsPanel />}
             {tab === "content" && (
               <ContentPanel

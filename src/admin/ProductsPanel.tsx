@@ -12,6 +12,7 @@ import {
   type ContentDoc,
   type Product,
 } from "../../shared/content.ts";
+import { formatMoney, unitPriceOf } from "../../shared/orders.ts";
 import { adminApi, conflictRevision } from "./api";
 import { Icons } from "./icons";
 import {
@@ -55,6 +56,7 @@ type Draft = {
   fallback: string;
   color: string;
   availability: Availability;
+  price: string;
   quantity: string;
   isNew: boolean;
   newUntil: string;
@@ -75,6 +77,7 @@ const emptyDraft = (category: string): Draft => ({
   fallback: "",
   color: "#f3e3c3",
   availability: "available",
+  price: "",
   quantity: "",
   isNew: false,
   newUntil: "",
@@ -97,6 +100,7 @@ const toDraft = (product: Product): Draft => ({
   fallback: product.fallback,
   color: product.color,
   availability: product.availability,
+  price: product.price === null ? "" : String(product.price),
   quantity: product.quantity === null ? "" : String(product.quantity),
   isNew: product.isNew,
   newUntil: product.newUntil,
@@ -118,6 +122,9 @@ const toPayload = (draft: Draft) => ({
   fallback: draft.fallback.trim(),
   color: draft.color,
   availability: draft.availability,
+  // An empty price is stored as null: «السعر عند الطلب». A price is never
+  // guessed on the owner's behalf.
+  price: draft.price.trim() === "" ? null : Number(draft.price),
   quantity: draft.quantity.trim() === "" ? null : Number(draft.quantity),
   isNew: draft.isNew,
   newUntil: draft.isNew ? draft.newUntil : "",
@@ -143,6 +150,7 @@ export default function ProductsPanel({
   onContent: (document: ContentDoc) => void;
   categories: string[];
 }) {
+  const currency = content.commerce.currency;
   const [draft, setDraft] = useState<Draft | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("الكل");
@@ -419,6 +427,21 @@ export default function ProductsPanel({
 
       <Grid columns={2}>
         <Field
+          label="السعر للوحدة"
+          hint="اتركه فارغًا ليظهر «السعر عند الطلب» ويُطلب المنتج عبر واتساب فقط. السعر مطلوب لإتاحة الشراء من السلة."
+          error={errors.price}
+        >
+          <TextInput
+            value={draft.price}
+            onChange={(price) => setDraft({ ...draft, price })}
+            type="number"
+            inputMode="decimal"
+            dir="ltr"
+            min={0}
+            step={0.25}
+          />
+        </Field>
+        <Field
           label="الكمية المتاحة"
           hint={
             draft.availability === "unlimited"
@@ -651,6 +674,13 @@ export default function ProductsPanel({
                         </span>
                       )}
                     <span className="meta-line">العبوة: {product.size}</span>
+                    <span
+                      className={`meta-line${product.price === null ? " meta-line--warn" : ""}`}
+                    >
+                      {product.price === null
+                        ? "بدون سعر — لا يُباع من السلة"
+                        : `السعر: ${formatMoney(unitPriceOf(product), currency)}`}
+                    </span>
                   </div>
                 </div>
 

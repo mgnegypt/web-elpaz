@@ -1,5 +1,14 @@
-import { useState } from "react";
-import { ArrowUpLeft, BadgePercent, Clock, PackageSearch, Sparkles, Truck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  ArrowUpLeft,
+  BadgePercent,
+  Clock,
+  PackageSearch,
+  Search,
+  ShoppingBag,
+  Sparkles,
+  Truck,
+} from "lucide-react";
 import {
   AVAILABILITY_LABELS,
   isNewBadgeActive,
@@ -8,19 +17,90 @@ import {
   stockLabel,
   type Product,
 } from "../../shared/content.ts";
+import { isPurchasable, unitPriceOf } from "../../shared/orders.ts";
 import { useContent } from "../content/ContentContext";
+import { useCart } from "../cart/CartContext";
 import { orderMessage, waLink } from "../lib/whatsapp";
+import { PriceTag } from "./commerce/Bits";
 import { ProductImage, SectionTitle, WhatsAppIcon } from "./shared";
+
+type Sort = "default" | "price-asc" | "price-desc" | "name";
+
+const SORTS: { value: Sort; label: string }[] = [
+  { value: "default", label: "الترتيب الافتراضي" },
+  { value: "price-asc", label: "السعر: من الأقل" },
+  { value: "price-desc", label: "السعر: من الأعلى" },
+  { value: "name", label: "الاسم (أ–ي)" },
+];
+
+/** The chosen category lives in the URL so a filtered view can be shared. */
+const categoryFromUrl = () =>
+  new URLSearchParams(window.location.search).get("category") ?? "الكل";
+
 export default function Products({
   onSelect,
 }: {
   onSelect: (product: Product) => void;
 }) {
-  const { products, categories, copy, contentStatus, site } = useContent();
-  const [category, setCategory] = useState("الكل");
-  const filtered = products.filter(
-    (p) => category === "الكل" || p.category === category,
-  );
+  const { products, categories, copy, contentStatus, site, commerce } = useContent();
+  const cart = useCart();
+  const [category, setCategory] = useState(categoryFromUrl);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<Sort>("default");
+  const [flash, setFlash] = useState("");
+
+  // Keep the address bar in step, and follow the back button.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (category === "الكل") url.searchParams.delete("category");
+    else url.searchParams.set("category", category);
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`)
+      window.history.replaceState({}, "", next);
+  }, [category]);
+
+  useEffect(() => {
+    const sync = () => setCategory(categoryFromUrl());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+
+  useEffect(() => {
+    if (!flash) return;
+    const timer = window.setTimeout(() => setFlash(""), 2600);
+    return () => window.clearTimeout(timer);
+  }, [flash]);
+
+  const anyPriced = products.some((product) => product.price !== null);
+
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const list = products.filter((product) => {
+      if (category !== "الكل" && product.category !== category) return false;
+      if (!term) return true;
+      return (
+        product.name.toLowerCase().includes(term) ||
+        product.desc.toLowerCase().includes(term) ||
+        product.category.toLowerCase().includes(term)
+      );
+    });
+    if (sort === "name") return [...list].sort((a, b) => a.name.localeCompare(b.name, "ar"));
+    if (sort === "price-asc" || sort === "price-desc") {
+      const price = (product: Product) =>
+        product.price === null ? Number.POSITIVE_INFINITY : unitPriceOf(product);
+      return [...list].sort((a, b) =>
+        sort === "price-asc" ? price(a) - price(b) : price(b) - price(a),
+      );
+    }
+    return list;
+  }, [products, category, search, sort]);
+
+  const addToCart = (product: Product) => {
+    const result = cart.add(product);
+    setFlash(result.ok ? `تمت إضافة ${product.name} إلى السلة` : (result.reason ?? ""));
+    if (result.ok) cart.open();
+  };
+
   return (
     <div className="section-container products-container">
       <SectionTitle
@@ -40,9 +120,44 @@ export default function Products({
           </button>
         ))}
       </div>
+      <div className="catalog-tools">
+        <div className="catalog-search">
+          <Search size={16} aria-hidden="true" />
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="ابحث باسم المنتج…"
+            aria-label="ابحث في المنتجات"
+          />
+        </div>
+        {anyPriced && (
+          <label className="catalog-sort">
+            <span className="sr-only">ترتيب المنتجات</span>
+            <select value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
+              {SORTS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <span className="catalog-count" aria-live="polite">
+          {filtered.length} منتج
+        </span>
+      </div>
+      <p className="sr-only" aria-live="polite">
+        {flash}
+      </p>
+      {flash && (
+        <p className="cart-flash" role="status">
+          {flash}
+        </p>
+      )}
       <div
         className="products-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"
-        key={category}
+        key={`${category}-${sort}`}
       >
         {filtered.map((p, i) => (
           <article
@@ -94,6 +209,13 @@ export default function Products({
               <div className="product-copy">
                 <h2>{p.name}</h2>
                 <p>{p.desc}</p>
+                {(p.price !== null || anyPriced) && (
+                  <PriceTag
+                    price={p.price}
+                    discountPercent={p.discountPercent}
+                    currency={commerce.currency}
+                  />
+                )}
                 {stockLabel(p) && (
                   <span
                     className={`stock-chip stock-chip--${p.availability}${
@@ -112,6 +234,16 @@ export default function Products({
                 )}
               </div>
             </button>
+            {cart.ordersEnabled && isPurchasable(p) && (
+              <button
+                type="button"
+                className="primary-button add-to-cart"
+                onClick={() => addToCart(p)}
+              >
+                <ShoppingBag size={17} aria-hidden="true" />
+                أضف إلى السلة
+              </button>
+            )}
             {isOrderable(p) ? (
               <a
                 className="wa-button"
@@ -138,7 +270,11 @@ export default function Products({
       {!filtered.length && (
         <div className="empty-state">
           <PackageSearch size={44} />
-          <p>منتجات جديدة قريبًا، تواصل معنا لنعرف طلبك.</p>
+          <p>
+            {search.trim()
+              ? `لا توجد نتائج لـ «${search.trim()}». جرّب اسمًا آخر أو تصفّح كل التصنيفات.`
+              : "منتجات جديدة قريبًا، تواصل معنا لنعرف طلبك."}
+          </p>
         </div>
       )}
       <p className="section-footnote">
