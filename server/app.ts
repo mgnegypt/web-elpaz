@@ -7,6 +7,7 @@ import express, {
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { z } from "zod";
 import { existsSync } from "node:fs";
 import { join, sep } from "node:path";
 import {
@@ -27,12 +28,23 @@ import {
   type RequestStatus,
 } from "../shared/content.ts";
 import {
+  ContentUnreadable,
+  InvalidStatusTransition,
+  OrderRejected,
   RevisionConflict,
   ensureSetupToken,
   openDb,
   type AdminRow,
   type Db,
 } from "./db.ts";
+import {
+  ORDER_STATUSES,
+  orderDraftSchema,
+  priceOrder,
+  type Order,
+  type OrderStatus,
+  type PublicOrder,
+} from "../shared/orders.ts";
 import {
   SESSION_COOKIE,
   createSession,
@@ -70,6 +82,12 @@ export type AppOptions = {
   secureCookies?: boolean;
   /** Disables per-IP throttles so the automated suites can hammer the API. */
   relaxRateLimits?: boolean;
+  /**
+   * Requests per 15 minutes allowed on GET /api/content (the public read every
+   * visitor performs). Defaults to 3000; lower it only if the deployment
+   * forwards real client IPs (TRUST_PROXY_HOPS).
+   */
+  publicReadLimit?: number;
 };
 
 const BODY_LIMIT = "512kb";
@@ -82,6 +100,7 @@ export function createApp(options: AppOptions) {
     trustProxyHops = 0,
     secureCookies = process.env.NODE_ENV === "production",
     relaxRateLimits = false,
+    publicReadLimit = 3000,
   } = options;
 
   const db: Db = openDb(dataDir);
@@ -194,6 +213,10 @@ export function createApp(options: AppOptions) {
           detail: `${req.method} ${req.path}`,
           suspicious: true,
         });
+        // Tell the caller when to come back: the public site uses this to
+        // schedule its retry instead of giving up on the content it has.
+        res.setHeader("Retry-After", String(Math.ceil(windowMs / 1000)));
+        res.setHeader("Cache-Control", "no-store");
         res.status(429).json({ error: "too-many-requests" });
       },
       standardHeaders: "draft-7",
@@ -226,6 +249,16 @@ export function createApp(options: AppOptions) {
   const writeLimiter = limiter(10 * 60 * 1000, 30);
   const loginLimiter = limiter(15 * 60 * 1000, 10);
   const uploadLimiter = limiter(15 * 60 * 1000, 60);
+  /**
+   * The public content read gets its own, much larger budget.
+   *
+   * Every visitor needs this endpoint on every page load, and behind a reverse
+   * proxy without TRUST_PROXY_HOPS all of them share a single bucket — so the
+   * generic 600/15min budget turns a busy afternoon into site-wide 429s. It
+   * still is a bounded, read-only, no-side-effect endpoint, so a high ceiling
+   * keeps the flood protection without breaking the site for real visitors.
+   */
+  const contentLimiter = limiter(15 * 60 * 1000, publicReadLimit);
 
   // --- Private paths must never be reachable ---------------------------------
   const PRIVATE = [
@@ -363,16 +396,53 @@ export function createApp(options: AppOptions) {
   });
 
   app.get("/api/health", apiLimiter, (_req, res) => {
+    const health = db.contentHealth();
+    res.setHeader("Cache-Control", "no-store");
     res.json({
       ok: true,
       status: "ok",
       service: "elban-elbaz",
       time: new Date().toISOString(),
+      // Operational facts only — no content, no secrets. Makes "which database
+      // is this process actually serving?" answerable from the outside.
+      content: {
+        readable: health.ok,
+        revision: health.revision,
+        updatedAt: health.updatedAt,
+        seededThisBoot: db.provenance.seededDefaults,
+        freshDatabase: db.provenance.createdDatabase,
+      },
     });
   });
 
-  app.get("/api/content", apiLimiter, (_req, res) => {
-    res.json({ ...db.getContent(), events: db.activeEvents() });
+  /**
+   * The public content document.
+   *
+   * `no-cache` (not `no-store`): a browser or proxy may keep a copy but must
+   * revalidate every time, so the ETag below still turns an unchanged document
+   * into a cheap 304 while a published change is never served stale.
+   */
+  app.get("/api/content", contentLimiter, (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, must-revalidate");
+    try {
+      res.json({ ...db.getContent(), events: db.activeEvents() });
+    } catch (error) {
+      if (!(error instanceof ContentUnreadable)) throw error;
+      // The stored document is the source of truth and it cannot be read:
+      // answering with bundled defaults would silently replace the owner's
+      // real content, so say "unavailable" and let the client keep its last
+      // good copy.
+      console.error(
+        `[api] stored content failed validation: ${error.issues.join(" | ")}`,
+      );
+      db.recordAudit({
+        kind: "content.unreadable",
+        detail: error.issues.slice(0, 3).join(" | "),
+        suspicious: true,
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.status(503).json({ error: "content-unavailable" });
+    }
   });
 
   app.post(
@@ -420,6 +490,194 @@ export function createApp(options: AppOptions) {
       }
     },
   );
+
+  /* ------------------------------------------------------------- orders */
+
+  /**
+   * What a customer may read back about their own order. Internal fields —
+   * the row id, the IP we logged, who moved the status and any staff note —
+   * never leave the server.
+   */
+  const publicOrder = (order: Order): PublicOrder => {
+    const { id: _id, history, ...rest } = order;
+    return {
+      ...rest,
+      history: history.map((entry) => ({ status: entry.status, at: entry.at })),
+    };
+  };
+
+  const orderRejectionResponse = (error: OrderRejected) => {
+    switch (error.code) {
+      case "orders-disabled":
+        return {
+          status: 503,
+          body: {
+            error: "orders-disabled",
+            message: "الطلب أونلاين غير مُفعَّل حاليًا. تواصل معنا على واتساب.",
+          },
+        };
+      case "items":
+        return {
+          status: 409,
+          body: {
+            error: "items-changed",
+            message: "تغيّرت بعض المنتجات في السلة. راجع التفاصيل وحدّث طلبك.",
+            problems: error.problems,
+          },
+        };
+      case "below-minimum":
+        return {
+          status: 422,
+          body: {
+            error: "below-minimum",
+            message: `الحد الأدنى للطلب ${error.detail}`,
+            minimum: Number(error.detail),
+          },
+        };
+      case "zone-required":
+        return {
+          status: 422,
+          body: { error: "zone-required", message: "اختر منطقة التوصيل." },
+        };
+      case "payment-unavailable":
+        return {
+          status: 422,
+          body: {
+            error: "payment-unavailable",
+            message: "طريقة الدفع المختارة غير متاحة حاليًا.",
+          },
+        };
+      default:
+        return {
+          status: 422,
+          body: { error: "empty-order", message: "السلة فارغة." },
+        };
+    }
+  };
+
+  /**
+   * Re-prices a basket against the live catalogue. The cart calls this before
+   * showing a total so a stale localStorage basket is corrected in place, and
+   * the answer is advisory only: `POST /api/orders` prices everything again.
+   */
+  app.post("/api/cart/price", writeLimiter, requireSameOrigin, (req, res) => {
+    const parsed = z
+      .object({
+        items: z
+          .array(
+            z.object({
+              productId: z.number().int().positive(),
+              quantity: z.number().int().min(1).max(99),
+            }),
+          )
+          .max(40),
+        deliveryZoneId: z.string().trim().max(40).default(""),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-request" });
+      return;
+    }
+    try {
+      const content = db.getContent();
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        ordersEnabled: content.commerce.ordersEnabled,
+        priced: priceOrder(
+          parsed.data.items,
+          content.products,
+          content.commerce,
+          { deliveryZoneId: parsed.data.deliveryZoneId },
+        ),
+      });
+    } catch {
+      res.status(503).json({ error: "content-unavailable" });
+    }
+  });
+
+  app.post("/api/orders", writeLimiter, requireSameOrigin, (req, res) => {
+    const parsed = orderDraftSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({
+        error: "invalid-request",
+        details: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+    if (parsed.data.honeypot) {
+      // A bot filled the hidden field. Answer like a validation error and
+      // never create anything.
+      db.recordAudit({
+        kind: "order.honeypot",
+        ip: req.ip ?? "",
+        detail: "hidden field filled",
+        suspicious: true,
+      });
+      res.status(422).json({ error: "invalid-request" });
+      return;
+    }
+    try {
+      const { order, created, conflict, accessToken } = db.createOrder({
+        ...parsed.data,
+        ip: req.ip ?? "",
+      });
+      if (conflict) {
+        res.status(409).json({ error: "request-key-conflict" });
+        return;
+      }
+      if (created) {
+        // Stock moved, so every open page should refresh its catalogue.
+        hub.broadcast({ type: "content", revision: db.getContent().revision });
+        hub.broadcast({ type: "events" });
+        db.recordAudit({
+          kind: "order.created",
+          ip: req.ip ?? "",
+          detail: `${order.reference} · ${order.itemCount} صنف`,
+        });
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.status(created ? 201 : 200).json({
+        ok: true,
+        duplicate: !created,
+        reference: order.reference,
+        // The token is returned once, to the browser that placed the order.
+        accessToken,
+        order: publicOrder(order),
+      });
+    } catch (error) {
+      if (error instanceof OrderRejected) {
+        const { status, body } = orderRejectionResponse(error);
+        res.status(status).json(body);
+        return;
+      }
+      if (error instanceof RevisionConflict) {
+        res.status(409).json({
+          error: "busy",
+          message: "حدث تعديل على المنتجات في نفس اللحظة. حاول مرة أخرى.",
+        });
+        return;
+      }
+      // Never tell the visitor an order exists when it does not.
+      res.status(500).json({ error: "persistence-failed" });
+    }
+  });
+
+  /**
+   * Customer order lookup. The reference alone is not enough: the token
+   * issued at creation must match, so an order link cannot be guessed and
+   * references are never enumerable.
+   */
+  app.get("/api/orders/:reference", contentLimiter, (req, res) => {
+    const token = String(req.query.token ?? "");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    const order = db.getOrderByReference(req.params.reference, token);
+    if (!order) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    res.json({ order: publicOrder(order) });
+  });
 
   // --- Session helpers -------------------------------------------------------
   type Session = NonNullable<ReturnType<typeof readSession>>;
@@ -1440,10 +1698,32 @@ export function createApp(options: AppOptions) {
     product: Record<string, unknown> | null,
     /** 201 only for a genuine creation; edits and deletions are 200. */
     status: 200 | 201 = 200,
+    options: { releaseLegacyPlaceholderId?: number } = {},
   ) => {
+    const current = db.getContent();
+    /**
+     * `contentStatus.placeholderProductIds` is the legacy way of marking a
+     * photo as illustrative, and it points at product *ids*. Ids are handed
+     * out as max(id)+1, so deleting a demo product and adding a real one
+     * recycles the number and the newcomer inherits the "صورة توضيحية" label.
+     * Releasing the id whenever a product with that number is created or
+     * deleted removes the stale reference at the exact moment it would
+     * otherwise become wrong. Products explicitly marked illustrative are
+     * unaffected: they carry their own flag.
+     */
+    const legacyIds = current.contentStatus.placeholderProductIds;
+    const release = options.releaseLegacyPlaceholderId;
+    const contentStatus =
+      release !== undefined && legacyIds.includes(release)
+        ? {
+            ...current.contentStatus,
+            placeholderProductIds: legacyIds.filter((id) => id !== release),
+          }
+        : current.contentStatus;
     const parsed = contentSchema.safeParse({
-      ...db.getContent(),
+      ...current,
       products: next,
+      contentStatus,
     });
     if (!parsed.success) {
       res.status(422).json({
@@ -1482,9 +1762,10 @@ export function createApp(options: AppOptions) {
     const body = productBody(req, res);
     if (!body) return;
     const current = db.getContent();
+    const id = Math.max(0, ...current.products.map((p) => p.id)) + 1;
     const nextProduct = {
       ...(body.product as Record<string, unknown>),
-      id: Math.max(0, ...current.products.map((p) => p.id)) + 1,
+      id,
     };
     saveProducts(
       req,
@@ -1493,6 +1774,7 @@ export function createApp(options: AppOptions) {
       body.revision,
       nextProduct,
       201,
+      { releaseLegacyPlaceholderId: id },
     );
   });
 
@@ -1519,6 +1801,11 @@ export function createApp(options: AppOptions) {
         body.revision,
         { ...body.product, id },
         200,
+        // Confirming the photo as genuine also clears the stale legacy entry,
+        // so the two never contradict each other in the stored document.
+        body.product.imageAuthenticity === "genuine"
+          ? { releaseLegacyPlaceholderId: id }
+          : {},
       );
     },
   );
@@ -1545,9 +1832,110 @@ export function createApp(options: AppOptions) {
         current.products.filter((p) => p.id !== id),
         revision,
         null,
+        200,
+        { releaseLegacyPlaceholderId: id },
       );
     },
   );
+
+  /* --------------------------------------------------- admin · orders */
+
+  admin.get("/orders", (req, res) => {
+    const limit = Math.min(
+      100,
+      Math.max(1, Number.parseInt(String(req.query.limit ?? "25"), 10) || 25),
+    );
+    const offset = Math.max(
+      0,
+      Number.parseInt(String(req.query.offset ?? "0"), 10) || 0,
+    );
+    const status = String(req.query.status ?? "");
+    const { items, total } = db.listOrders({
+      search: String(req.query.search ?? ""),
+      status: (ORDER_STATUSES as readonly string[]).includes(status)
+        ? status
+        : "",
+      limit,
+      offset,
+    });
+    res.json({ items, total, limit, offset, stats: db.orderStats() });
+  });
+
+  admin.get("/orders/:id", (req, res) => {
+    const order = db.getOrder(Number.parseInt(req.params.id, 10));
+    if (!order) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    res.json({ order });
+  });
+
+  admin.patch("/orders/:id", requireCsrf, requireProfileComplete, (req, res) => {
+    const actorRow = res.locals.admin as AdminRow;
+    const parsed = z
+      .object({
+        status: z.enum(ORDER_STATUSES).optional(),
+        paymentStatus: z.enum(["unpaid", "paid"]).optional(),
+        note: z.string().trim().max(300).default(""),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "invalid-request" });
+      return;
+    }
+    const id = Number.parseInt(req.params.id, 10);
+    const current = db.getOrder(id);
+    if (!current) {
+      res.status(404).json({ error: "not-found" });
+      return;
+    }
+    const actor = {
+      id: actorRow.id,
+      name: actorRow.display_name || actorRow.username,
+    };
+    try {
+      let order = current;
+      if (parsed.data.status && parsed.data.status !== current.status) {
+        order = db.setOrderStatus(
+          id,
+          parsed.data.status as OrderStatus,
+          actor,
+          parsed.data.note,
+        );
+        audit(req, "order.status", {
+          actor: actorRow,
+          detail: `${order.reference}: ${current.status} → ${order.status}`,
+        });
+      }
+      if (
+        parsed.data.paymentStatus &&
+        parsed.data.paymentStatus !== current.paymentStatus
+      ) {
+        order = db.setOrderPayment(id, parsed.data.paymentStatus, actor);
+        audit(req, "order.payment", {
+          actor: actorRow,
+          detail: `${order.reference}: ${parsed.data.paymentStatus}`,
+        });
+      }
+      // Cancelling returns stock to the catalogue, so refresh open pages.
+      hub.broadcast({ type: "content", revision: db.getContent().revision });
+      res.json({ order });
+    } catch (error) {
+      if (error instanceof InvalidStatusTransition) {
+        res.status(409).json({
+          error: "invalid-transition",
+          from: error.from,
+          to: error.to,
+        });
+        return;
+      }
+      if (error instanceof RevisionConflict) {
+        res.status(409).json({ error: "revision-conflict" });
+        return;
+      }
+      res.status(500).json({ error: "update-failed" });
+    }
+  });
 
   app.use("/api/admin", admin);
 
@@ -1616,7 +2004,11 @@ export function createApp(options: AppOptions) {
       }),
     );
     // SPA fallback: the public site and /admin both resolve to index.html.
-    app.get("*", (_req, res) => {
+    app.get("*", (req, res) => {
+      // A customer's order page and the checkout are private: tell crawlers
+      // so even a shared link never ends up in a search index.
+      if (/^\/(order|checkout|admin)(\/|$)/.test(req.path))
+        res.setHeader("X-Robots-Tag", "noindex, nofollow");
       res.sendFile(join(distDir, "index.html"));
     });
   }

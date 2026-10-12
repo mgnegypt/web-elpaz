@@ -7,6 +7,7 @@ import type {
   Role,
   SiteEvent,
 } from "../../shared/content.ts";
+import type { Order, OrderStats, OrderStatus } from "../../shared/orders.ts";
 
 export type AdminSessionBase = {
   id: number;
@@ -148,6 +149,14 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) throw new ApiFailure(response.status, payload);
   return payload as T;
 }
+
+export type OrdersPage = {
+  items: Order[];
+  total: number;
+  limit: number;
+  offset: number;
+  stats: OrderStats;
+};
 
 export const adminApi = {
   audit: (
@@ -333,6 +342,26 @@ export const adminApi = {
       `/api/admin/products/${id}`,
       { method: "PUT", body: JSON.stringify({ product, revision }) },
     ),
+  // ---- orders ------------------------------------------------------------
+  orders: (
+    params: { search?: string; status?: string; limit?: number; offset?: number } = {},
+  ) => {
+    const query = new URLSearchParams();
+    if (params.search) query.set("search", params.search);
+    if (params.status) query.set("status", params.status);
+    query.set("limit", String(params.limit ?? 25));
+    query.set("offset", String(params.offset ?? 0));
+    return call<OrdersPage>(`/api/admin/orders?${query.toString()}`);
+  },
+  order: (id: number) => call<{ order: Order }>(`/api/admin/orders/${id}`),
+  updateOrder: (
+    id: number,
+    patch: { status?: OrderStatus; paymentStatus?: "paid" | "unpaid"; note?: string },
+  ) =>
+    call<{ order: Order }>(`/api/admin/orders/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
   deleteProduct: (id: number, revision: number) =>
     call<{ ok: true; revision: number; products: Content["products"] }>(
       `/api/admin/products/${id}`,

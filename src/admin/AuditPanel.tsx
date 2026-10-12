@@ -7,12 +7,15 @@ import { Icons } from "./icons";
 import {
   Badge,
   Card,
+  EmptyState,
+  Notice,
   PageHeader,
-  Skeleton,
+  SegmentedControl,
+  SkeletonRows,
+  StatPill,
   describeError,
   useToast,
 } from "./ui";
-import { StatPill } from "./ProductsPanel";
 import { shortDateTime } from "./dates";
 
 const KIND_LABELS: { match: RegExp; label: string }[] = [
@@ -33,6 +36,45 @@ const KIND_LABELS: { match: RegExp; label: string }[] = [
   { match: /^authz\./, label: "صلاحية مرفوضة" },
   { match: /^ratelimit\./, label: "تجاوز حد الطلبات" },
 ];
+
+/**
+ * The server writes short English notes next to each event. Administrators
+ * should never have to read them, so the known sentences are translated here
+ * (dynamic parts — names, addresses, revisions — are kept as they are).
+ */
+const DETAILS: Record<string, string> = {
+  "wrong or missing setup token": "رمز إعداد خاطئ أو مفقود",
+  "owner account created": "تم إنشاء حساب المالك",
+  "backoff active for the attempted identifier":
+    "تم إيقاف المحاولات مؤقتًا على هذا الحساب",
+  "awaiting the security answer": "بانتظار إجابة سؤال الأمان",
+  "no security question on file": "لا يوجد سؤال أمان على هذا الحساب",
+  "wrong security answer": "إجابة سؤال الأمان غير صحيحة",
+  "security answer verified": "تم التحقق من إجابة سؤال الأمان",
+  "permanent email, password and security question set":
+    "تم ضبط البريد وكلمة المرور وسؤال الأمان",
+  "profile details": "تعديل بيانات الملف الشخصي",
+  "other sessions revoked": "تم إنهاء الجلسات الأخرى",
+  "security question replaced": "تم تغيير سؤال الأمان",
+  "no-file": "لم يُرفق ملف",
+};
+
+const describeDetail = (detail: string) => {
+  if (!detail) return "";
+  const known = DETAILS[detail];
+  if (known) return known;
+  const revision = /^revision (\d+)$/.exec(detail);
+  if (revision) return `الإصدار ${revision[1]}`;
+  const id = /^id (\d+)$/.exec(detail);
+  if (id) return `رقم ${id[1]}`;
+  const role = /^(.+) as (owner|admin)$/.exec(detail);
+  if (role)
+    return `${role[1]} — ${role[2] === "owner" ? "مالك" : "مشرف"}`;
+  const active = /^(.+) active=(true|false)$/.exec(detail);
+  if (active)
+    return `${active[1]} — ${active[2] === "true" ? "ظاهرة" : "مخفية"}`;
+  return detail;
+};
 
 const labelFor = (kind: string) =>
   KIND_LABELS.find((entry) => entry.match.test(kind))?.label ?? kind;
@@ -72,72 +114,71 @@ export default function AuditPanel() {
         description="كل عملية حساسة تُسجَّل هنا: تسجيل الدخول، الحسابات، المحتوى، الصور والطلبات المرفوضة."
       />
 
-      <div className="stats-row">
+      <div className="stat-row">
         <StatPill
           label="إجمالي الأحداث"
           value={summary?.total ?? 0}
           tone="blue"
-          icon={<Icons.activity size={16} />}
+          icon={<Icons.activity size={18} />}
         />
         <StatPill
           label="آخر ٢٤ ساعة"
           value={summary?.last24h ?? 0}
           tone="green"
-          icon={<Icons.clock size={16} />}
+          icon={<Icons.clock size={18} />}
         />
         <StatPill
           label="أحداث مريبة"
           value={suspicious}
           tone={suspicious > 0 ? "red" : "violet"}
-          icon={<Icons.alert size={16} />}
+          icon={<Icons.alert size={18} />}
         />
       </div>
 
       {suspicious > 0 && (
-        <p className="audit-banner" role="status">
-          <Icons.shield size={18} />
-          <span>
-            هناك {suspicious} حدثًا يحتاج مراجعة: محاولات دخول فاشلة أو طلبات
-            مرفوضة. راجعها بالأسفل.
-          </span>
-        </p>
+        <Notice
+          tone="warn"
+          icon={<Icons.shield size={18} />}
+          title={`${suspicious} حدثًا يحتاج مراجعة`}
+        >
+          محاولات دخول فاشلة أو طلبات مرفوضة — راجعها في القائمة بالأسفل.
+        </Notice>
       )}
 
       <Card
         title="آخر الأحداث"
         className="audit-card"
+        icon={<Icons.history size={18} />}
         actions={
-          <div className="segmented" role="group" aria-label="تصفية السجل">
-            <button
-              type="button"
-              className={`segmented-item${filter === "all" ? " is-active" : ""}`}
-              aria-pressed={filter === "all"}
-              onClick={() => setFilter("all")}
-            >
-              الكل
-            </button>
-            <button
-              type="button"
-              className={`segmented-item${filter === "suspicious" ? " is-active" : ""}`}
-              aria-pressed={filter === "suspicious"}
-              onClick={() => setFilter("suspicious")}
-            >
-              المريبة فقط
-            </button>
-          </div>
+          <SegmentedControl
+            label="تصفية السجل"
+            size="sm"
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { value: "all", label: "الكل" },
+              { value: "suspicious", label: "المريبة فقط", count: suspicious },
+            ]}
+          />
         }
       >
         {items === null ? (
-          <div className="audit-skeleton">
-            {[0, 1, 2, 3, 4].map((row) => (
-              <Skeleton key={row} height={38} />
-            ))}
-          </div>
+          <SkeletonRows rows={5} height={48} />
         ) : items.length === 0 ? (
-          <p className="empty-note">
-            <Icons.info size={16} />
-            لا توجد أحداث مسجّلة بعد.
-          </p>
+          <EmptyState
+            compact
+            icon={<Icons.activity size={26} />}
+            title={
+              filter === "suspicious"
+                ? "لا توجد أحداث مريبة"
+                : "لا توجد أحداث مسجّلة بعد"
+            }
+            description={
+              filter === "suspicious"
+                ? "كل شيء يبدو طبيعيًا حتى الآن."
+                : undefined
+            }
+          />
         ) : (
           <ul className="audit-list">
             {items.map((entry) => (
@@ -152,10 +193,14 @@ export default function AuditPanel() {
                 <div className="audit-main">
                   <div className="audit-head">
                     <strong>{labelFor(entry.kind)}</strong>
-                    {entry.suspicious && <Badge tone="red">يحتاج مراجعة</Badge>}
+                    {entry.suspicious && (
+                      <Badge tone="red" size="sm">
+                        يحتاج مراجعة
+                      </Badge>
+                    )}
                   </div>
                   <p className="audit-detail">
-                    {entry.detail || entry.kind}
+                    {describeDetail(entry.detail) || labelFor(entry.kind)}
                     {entry.actorName ? ` — ${entry.actorName}` : ""}
                   </p>
                 </div>

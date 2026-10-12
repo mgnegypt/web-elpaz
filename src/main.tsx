@@ -1,7 +1,8 @@
 import React, { lazy, Suspense } from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
+import Storefront from "./Storefront";
 import { ContentProvider } from "./content/ContentContext";
+import { CartProvider } from "./cart/CartContext";
 import "@fontsource/cairo/arabic-400.css";
 import "@fontsource/cairo/arabic-500.css";
 import "@fontsource/cairo/arabic-600.css";
@@ -33,7 +34,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     ) : (
       // The public site refreshes itself when a visitor returns to the tab.
       <ContentProvider>
-        <App />
+        <CartProvider>
+          <Storefront />
+        </CartProvider>
       </ContentProvider>
     )}
   </React.StrictMode>,

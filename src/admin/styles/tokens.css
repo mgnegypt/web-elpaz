@@ -1,0 +1,165 @@
+/* ===========================================================================
+   Design tokens — the only place colours, spacing, radii, shadows and motion
+   are defined. Light and dark are two deliberate palettes, not an inversion.
+
+   Scope: every dashboard surface carries the `dash` class (shell, auth screen,
+   boot screen and the three portals: modal, drawer, toasts). Scoping keeps the
+   dashboard styles away from the public site, which shares this stylesheet.
+   =========================================================================== */
+
+.dash {
+  /* brand -------------------------------------------------------------- */
+  --dash-brand: #1e3fa8;
+  --dash-brand-deep: #142a73;
+  --dash-gold: #8a6508;
+  --dash-gold-bg: #fbf0d2;
+
+  /* surfaces ----------------------------------------------------------- */
+  --dash-bg: #f1f3f9;
+  --dash-bg-grad: #e8ecf6;
+  --dash-surface: #ffffff;
+  --dash-surface-2: #f6f8fc;
+  --dash-surface-3: #eceff7;
+  --dash-elevated: #ffffff;
+  --dash-sunken: #f4f6fb;
+
+  /* lines -------------------------------------------------------------- */
+  --dash-line: #e0e5ef;
+  --dash-line-soft: #eceff6;
+  --dash-line-strong: #c9d1e2;
+
+  /* text --------------------------------------------------------------- */
+  --dash-text: #101a30;
+  --dash-text-2: #3d4865;
+  --dash-muted: #68728d;
+  --dash-on-primary: #ffffff;
+
+  /* interactive -------------------------------------------------------- */
+  --dash-primary: #1e3fa8;
+  --dash-primary-hover: #17328b;
+  --dash-primary-ink: #1b3a9c;
+  --dash-primary-soft: #1e3fa814;
+  --dash-primary-soft-hover: #1e3fa822;
+
+  /* status ------------------------------------------------------------- */
+  --dash-success: #0e7a50;
+  --dash-success-soft: #0e7a5014;
+  --dash-warn: #8a5a06;
+  --dash-warn-soft: #b4770a1a;
+  --dash-danger: #b22420;
+  --dash-danger-soft: #b2242014;
+  --dash-danger-hover: #951d1a;
+  --dash-info: #1a4fc4;
+  --dash-info-soft: #1a4fc414;
+  --dash-violet: #5440c0;
+  --dash-violet-soft: #5440c014;
+
+  /* form controls ------------------------------------------------------ */
+  --dash-input-bg: #ffffff;
+  --dash-input-border: #ccd4e4;
+  --dash-input-disabled: #f1f3f8;
+
+  /* overlays ----------------------------------------------------------- */
+  --dash-scrim: #0d14268c;
+  --dash-ring: 0 0 0 3px #1e3fa840;
+  --dash-shadow-xs: 0 1px 2px #10193014;
+  --dash-shadow-sm: 0 2px 6px #1019301a;
+  --dash-shadow-md: 0 8px 24px -8px #1019302e;
+  --dash-shadow-lg: 0 24px 60px -16px #10193040;
+
+  /* radii -------------------------------------------------------------- */
+  --r-xs: 7px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+
+  /* type scale (Arabic first: generous line-height, no tiny text) ------- */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-base: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 28px;
+  --lh-tight: 1.35;
+  --lh-body: 1.75;
+
+  /* spacing ------------------------------------------------------------ */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+
+  /* layout ------------------------------------------------------------- */
+  --sidebar-w: 264px;
+  --sidebar-rail: 88px;
+  --topbar-h: 64px;
+  --page-max: 1400px;
+
+  /* motion — one duration ladder, one easing curve --------------------- */
+  --dur-1: 0.12s;
+  --dur-2: 0.18s;
+  --dur-3: 0.26s;
+  --dur-4: 0.34s;
+  --ease: cubic-bezier(0.22, 0.72, 0.3, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="dark"] .dash {
+  --dash-brand: #5b7cf0;
+  --dash-brand-deep: #0a1125;
+  --dash-gold: #e7c05c;
+  --dash-gold-bg: #3a2f10;
+
+  --dash-bg: #0a1022;
+  --dash-bg-grad: #0d1530;
+  --dash-surface: #121b33;
+  --dash-surface-2: #17213c;
+  --dash-surface-3: #1d2847;
+  --dash-elevated: #16203a;
+  --dash-sunken: #0e1628;
+
+  --dash-line: #27314f;
+  --dash-line-soft: #1d2740;
+  --dash-line-strong: #39456a;
+
+  --dash-text: #eaeffc;
+  --dash-text-2: #bcc6e0;
+  --dash-muted: #8b96b6;
+  --dash-on-primary: #ffffff;
+
+  --dash-primary: #3a5bd0;
+  --dash-primary-hover: #4869dd;
+  --dash-primary-ink: #9db3ff;
+  --dash-primary-soft: #6d8cff1f;
+  --dash-primary-soft-hover: #6d8cff33;
+
+  --dash-success: #45cc93;
+  --dash-success-soft: #45cc931f;
+  --dash-warn: #e8b55a;
+  --dash-warn-soft: #e8b55a1f;
+  --dash-danger: #ff8475;
+  --dash-danger-soft: #ff84751f;
+  --dash-danger-hover: #ff9d90;
+  --dash-info: #85a6ff;
+  --dash-info-soft: #85a6ff1f;
+  --dash-violet: #a99cf5;
+  --dash-violet-soft: #a99cf51f;
+
+  --dash-input-bg: #0e1729;
+  --dash-input-border: #313d61;
+  --dash-input-disabled: #141d33;
+
+  --dash-scrim: #04081499;
+  --dash-ring: 0 0 0 3px #6d8cff4d;
+  --dash-shadow-xs: 0 1px 2px #00000052;
+  --dash-shadow-sm: 0 2px 8px #0000005c;
+  --dash-shadow-md: 0 10px 28px -10px #00000080;
+  --dash-shadow-lg: 0 26px 64px -18px #000000a6;
+}

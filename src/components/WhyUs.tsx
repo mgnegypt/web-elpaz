@@ -1,13 +1,7 @@
-import {
-  Leaf,
-  ShieldCheck,
-  Truck,
-  BadgePercent,
-  ArrowLeft,
-} from "lucide-react";
+import { Leaf, ArrowLeft } from "lucide-react";
 import { useContent } from "../content/ContentContext";
+import { resolveContentIcon } from "../lib/contentIcons";
 import { SectionTitle } from "./shared";
-const icons = { Leaf, ShieldCheck, Truck, BadgePercent };
 export default function WhyUs({ goTo }: { goTo: (n: number) => void }) {
   const { whyUs, copy } = useContent();
   return (
@@ -19,7 +13,7 @@ export default function WhyUs({ goTo }: { goTo: (n: number) => void }) {
       />
       <div className="why-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         {whyUs.map((item, i) => {
-          const Icon = icons[item.icon as keyof typeof icons] ?? Leaf;
+          const { Icon } = resolveContentIcon(item.icon);
           return (
             <article
               className="why-card enter"

@@ -728,6 +728,27 @@ test("layout: every dashboard screen fits every viewport in both themes", async 
             page,
             `layout-dash-${viewport.label}-${theme}-${slug(label)}`,
           );
+
+          // The content panel has its own tabs, and «حالة المحتوى» holds the
+          // classification queues: rows of names followed by two buttons each,
+          // plus a bulk bar. That is the densest row in the dashboard, so it
+          // gets probed at every size instead of only on the default tab.
+          if (label === "محتوى الموقع") {
+            await page
+              .getByRole("tab", { name: "حالة المحتوى" })
+              .click({ timeout: 15000 });
+            await page.waitForTimeout(250);
+            await probe(
+              page,
+              "dashboard",
+              `dashboard content status ${viewport.label} ${theme}`,
+              { touch: viewport.touch },
+            );
+            await shot(
+              page,
+              `layout-dash-${viewport.label}-${theme}-content-status`,
+            );
+          }
         }
 
         // Profile drawer (X at the top, log out at the bottom).

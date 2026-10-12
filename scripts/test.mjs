@@ -11,31 +11,35 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const mode = process.argv[2] ?? "all";
 
 const SUITES = {
-  api: ["tests/api.test.mjs"],
+  api: ["tests/api.test.mjs", "tests/orders.test.mjs"],
+  orders: ["tests/orders.test.mjs"],
   security: ["tests/security.test.mjs"],
   site: ["tests/site.test.mjs"],
   admin: ["tests/admin.test.mjs"],
   layout: ["tests/layout.test.mjs"],
+  shop: ["tests/shop.test.mjs"],
   all: [
     "tests/api.test.mjs",
+    "tests/orders.test.mjs",
     "tests/security.test.mjs",
     "tests/site.test.mjs",
     "tests/admin.test.mjs",
     "tests/layout.test.mjs",
+    "tests/shop.test.mjs",
   ],
 };
 
 const files = SUITES[mode];
 if (!files) {
   console.error(
-    `[test] unknown suite "${mode}" (expected api|security|site|admin|layout|all)`,
+    `[test] unknown suite "${mode}" (expected api|orders|security|site|admin|layout|shop|all)`,
   );
   process.exit(2);
 }
 
 // The API and security suites spin up an in-process app on a random port;
 // everything else needs the shared API + Vite pair on 3001/5173.
-const needsServers = !["api", "security"].includes(mode);
+const needsServers = !["api", "orders", "security"].includes(mode);
 
 /**
  * The suites talk to fixed ports. A leftover server from an earlier run would

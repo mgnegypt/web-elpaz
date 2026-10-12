@@ -1,32 +1,56 @@
 // Dashboard entrance: setup → first-run profile → login → security question →
-// success animation. Deliberately calm and brand-forward: no neon, no terminal.
+// success. One calm, brand-forward card: no neon, no terminal, no gradients
+// competing with the form. Every step validates in place before it calls the
+// API, and the server stays the only authority on whether a login succeeds.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiFailure, adminApi, setCsrfToken, type AdminSession } from "./api";
-import { Button, Field, TextInput, useToast } from "./ui";
+import { Button, Field, PasswordInput, TextInput, useToast } from "./ui";
 import { Icons } from "./icons";
 import ThemeToggle from "../components/ThemeToggle";
 import { prefersReducedMotion } from "../theme/theme";
 
-type Phase = "checking" | "setup" | "complete" | "login" | "security" | "success";
+type Phase =
+  | "checking"
+  | "setup"
+  | "complete"
+  | "login"
+  | "security"
+  | "success";
 
 const MESSAGES: Record<string, string> = {
-  "invalid-setup-token": "رمز الإعداد غير صحيح. راجعه من ملف الإعداد على السيرفر.",
-  "setup-already-complete": "تم إنشاء حساب المالك بالفعل. سجّل الدخول من فضلك.",
+  "invalid-setup-token":
+    "رمز الإعداد غير صحيح. راجعه من ملف الإعداد على السيرفر.",
+  "setup-already-complete":
+    "تم إنشاء حساب المالك بالفعل. سجّل الدخول من فضلك.",
   "invalid-credentials": "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
   "invalid-security-answer": "الإجابة غير صحيحة. حاول مرة أخرى.",
   "email-taken": "البريد الإلكتروني مستخدم بالفعل.",
   "username-taken": "اسم المستخدم مستخدم بالفعل.",
   "profile-already-complete": "هذا الحساب مكتمل بالفعل.",
   "too-many-requests": "محاولات كثيرة. انتظر قليلًا ثم أعد المحاولة.",
+  "too-many-attempts":
+    "محاولات دخول خاطئة كثيرة على هذا الحساب. انتظر قليلًا ثم أعد المحاولة.",
+  "password-too-common":
+    "كلمة المرور شائعة جدًا وسهلة التخمين. اختر كلمة مرور أقوى.",
+  "password-too-simple": "كلمة المرور بسيطة جدًا. اختر كلمة مرور أقوى.",
+  "password-matches-account":
+    "كلمة المرور لا يجب أن تحتوي على اسم المستخدم أو البريد الإلكتروني.",
 };
 
 const messageFor = (error: unknown) => {
-  const code = error instanceof ApiFailure ? (error.payload as { error?: string } | null)?.error : "";
+  const code =
+    error instanceof ApiFailure
+      ? (error.payload as { error?: string } | null)?.error
+      : "";
   if (code && MESSAGES[code]) return MESSAGES[code];
-  if (error instanceof ApiFailure && error.status === 422) return "راجع البيانات: كلمة المرور ١٢ حرفًا على الأقل.";
-  if (error instanceof TypeError) return "تعذّر الاتصال بالسيرفر. تحقّق من الشبكة.";
+  if (error instanceof ApiFailure && error.status === 422)
+    return "راجع البيانات: كلمة المرور ١٢ حرفًا على الأقل.";
+  if (error instanceof TypeError)
+    return "تعذّر الاتصال بالسيرفر. تحقّق من الشبكة.";
   return "حدث خطأ غير متوقع. حاول مرة أخرى.";
 };
+
+const isEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value);
 
 export default function AuthScreen({
   onSuccess,
@@ -41,6 +65,7 @@ export default function AuthScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [token, setToken] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -50,10 +75,14 @@ export default function AuthScreen({
   const [answer, setAnswer] = useState("");
   const [currentQuestion, setCurrentQuestion] = useState(initialQuestion);
   const toast = useToast();
-  const firstField = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
+  // Each step starts with focus on its first field.
   useEffect(() => {
-    firstField.current?.focus();
+    const frame = requestAnimationFrame(() => {
+      formRef.current?.querySelector<HTMLInputElement>("input")?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [phase]);
 
   const run = async (task: () => Promise<void>) => {
@@ -68,10 +97,49 @@ export default function AuthScreen({
     }
   };
 
+  /** Client-side checks. The server validates everything again regardless. */
+  const validate = (): boolean => {
+    const next: Record<string, string> = {};
+    if (phase === "setup") {
+      if (!token.trim()) next.token = "أدخل رمز الإعداد.";
+      if (password.length < 12)
+        next.password = "كلمة المرور يجب ألا تقل عن ١٢ حرفًا.";
+    }
+    if (phase === "complete") {
+      if (!displayName.trim()) next.displayName = "أدخل الاسم الذي سيظهر لك.";
+      if (!isEmail(email.trim()))
+        next.email = "أدخل بريدًا إلكترونيًا صحيحًا.";
+      if (password.length < 12)
+        next.password = "كلمة المرور يجب ألا تقل عن ١٢ حرفًا.";
+      if (!question.trim()) next.question = "اكتب سؤال الأمان.";
+      if (!answer.trim()) next.answer = "اكتب إجابة سؤال الأمان.";
+    }
+    if (phase === "login") {
+      if (!identifier.trim())
+        next.identifier = "أدخل بريدك الإلكتروني أو اسم المستخدم.";
+      if (!password) next.password = "أدخل كلمة المرور.";
+    }
+    if (phase === "security" && !answer.trim())
+      next.answer = "اكتب الإجابة للمتابعة.";
+    setFieldErrors(next);
+    if (Object.keys(next).length) {
+      setError("");
+      // Move focus to the first problem so the keyboard user sees it.
+      requestAnimationFrame(() => {
+        formRef.current
+          ?.querySelector<HTMLElement>(".field--invalid input")
+          ?.focus();
+      });
+      return false;
+    }
+    return true;
+  };
+
   /* --------------------------------------------------------------- actions */
 
   const submitSetup = (event: React.FormEvent) => {
     event.preventDefault();
+    if (!validate()) return;
     void run(async () => {
       const result = await adminApi.setup(token.trim(), "owner", password);
       setCsrfToken(result.csrf);
@@ -84,6 +152,7 @@ export default function AuthScreen({
 
   const submitComplete = (event: React.FormEvent) => {
     event.preventDefault();
+    if (!validate()) return;
     void run(async () => {
       await adminApi.completeProfile({
         displayName: displayName.trim(),
@@ -94,7 +163,9 @@ export default function AuthScreen({
       });
       setPassword("");
       setAnswer("");
-      setNotice("تم حفظ البيانات. سجّل الدخول الآن بالبريد وكلمة المرور الجديدين.");
+      setNotice(
+        "تم حفظ البيانات. سجّل الدخول الآن بالبريد وكلمة المرور الجديدين.",
+      );
       setPhase("login");
       setIdentifier(email.trim());
     });
@@ -102,6 +173,7 @@ export default function AuthScreen({
 
   const submitLogin = (event: React.FormEvent) => {
     event.preventDefault();
+    if (!validate()) return;
     void run(async () => {
       const result = await adminApi.login(identifier.trim(), password);
       if ("requiresSecurityAnswer" in result && result.requiresSecurityAnswer) {
@@ -118,6 +190,7 @@ export default function AuthScreen({
 
   const submitSecurity = (event: React.FormEvent) => {
     event.preventDefault();
+    if (!validate()) return;
     void run(async () => {
       const result = await adminApi.loginSecurity(answer.trim());
       setCsrfToken(result.csrf);
@@ -126,10 +199,11 @@ export default function AuthScreen({
     });
   };
 
-  /** Loads the full session, plays the success beat, then hands over the dashboard. */
+  /** Loads the full session, plays the success beat, then hands over. */
   const finish = async () => {
     const session = await adminApi.session();
-    if (!session.authenticated) throw new ApiFailure(401, { error: "unauthenticated" });
+    if (!session.authenticated)
+      throw new ApiFailure(401, { error: "unauthenticated" });
     setCsrfToken(session.csrf);
     setPhase("success");
     const wait = prefersReducedMotion() ? 500 : 1500;
@@ -142,19 +216,31 @@ export default function AuthScreen({
   const heading = useMemo(() => {
     switch (phase) {
       case "setup":
-        return { title: "الإعداد الأول", sub: "أنشئ حساب المالك بخطوة واحدة آمنة." };
+        return {
+          title: "الإعداد الأول",
+          sub: "أنشئ حساب المالك بخطوة واحدة آمنة.",
+        };
       case "complete":
-        return { title: "بيانات حسابك", sub: "بريدك وكلمة مرورك وسؤال الأمان — تُحفظ مشفّرة." };
+        return {
+          title: "بيانات حسابك",
+          sub: "بريدك وكلمة مرورك وسؤال الأمان — تُحفظ مشفّرة.",
+        };
       case "security":
-        return { title: "سؤال الأمان", sub: "خطوة تحقّق إضافية لحماية لوحة التحكم." };
+        return {
+          title: "سؤال الأمان",
+          sub: "خطوة تحقّق إضافية لحماية لوحة التحكم.",
+        };
       default:
-        return { title: "تسجيل الدخول", sub: "أهلًا بك في لوحة تحكم البان إلباظ." };
+        return {
+          title: "تسجيل الدخول",
+          sub: "أهلًا بك في لوحة تحكم البان إلباظ.",
+        };
     }
   }, [phase]);
 
   if (phase === "success") {
     return (
-      <div className="auth-screen auth-screen--success">
+      <div className="auth-screen auth-screen--success dash">
         <div className="auth-success" role="status" aria-live="assertive">
           <span className="auth-success-ring" aria-hidden="true">
             <Icons.check size={38} strokeWidth={2.4} />
@@ -169,8 +255,8 @@ export default function AuthScreen({
 
   if (phase === "checking") {
     return (
-      <div className="auth-screen">
-        <div className="auth-card auth-card--loading glass-card">
+      <div className="auth-screen dash">
+        <div className="auth-card auth-card--loading">
           <span className="skeleton" style={{ width: 148, height: 22 }} />
           <span className="skeleton" style={{ width: "100%", height: 46 }} />
           <span className="skeleton" style={{ width: "100%", height: 46 }} />
@@ -180,8 +266,16 @@ export default function AuthScreen({
     );
   }
 
+  const steps =
+    phase === "setup" || phase === "complete"
+      ? [
+          { key: "setup", label: "إنشاء الحساب" },
+          { key: "complete", label: "بيانات الدخول" },
+        ]
+      : null;
+
   return (
-    <div className="auth-screen">
+    <div className="auth-screen dash">
       <div className="auth-card">
         <aside className="auth-brand">
           <div className="auth-brand-mark">
@@ -210,25 +304,59 @@ export default function AuthScreen({
         </aside>
 
         <div className="auth-form-side">
-          <form className="auth-form" onSubmit={
-            phase === "setup"
-              ? submitSetup
-              : phase === "complete"
-                ? submitComplete
-                : phase === "security"
-                  ? submitSecurity
-                  : submitLogin
-          }>
+          <form
+            ref={formRef}
+            className="auth-form"
+            noValidate
+            onSubmit={
+              phase === "setup"
+                ? submitSetup
+                : phase === "complete"
+                  ? submitComplete
+                  : phase === "security"
+                    ? submitSecurity
+                    : submitLogin
+            }
+          >
             <header className="auth-head">
               <div className="auth-head-row">
                 <span className="auth-eyebrow">
-                  {phase === "setup" ? <Icons.key size={15} /> : <Icons.lock size={15} />}
-                  {phase === "security" ? "تحقّق إضافي" : phase === "setup" ? "مرة واحدة" : "منطقة آمنة"}
+                  {phase === "setup" ? (
+                    <Icons.key size={15} />
+                  ) : (
+                    <Icons.lock size={15} />
+                  )}
+                  {phase === "security"
+                    ? "تحقّق إضافي"
+                    : phase === "setup"
+                      ? "مرة واحدة"
+                      : "منطقة آمنة"}
                 </span>
                 <ThemeToggle />
               </div>
               <h1>{heading.title}</h1>
               <p>{heading.sub}</p>
+              {steps && (
+                <ol className="auth-steps" aria-label="خطوات الإعداد">
+                  {steps.map((step, index) => (
+                    <li
+                      key={step.key}
+                      className={`auth-step${step.key === phase ? " is-active" : ""}${
+                        phase === "complete" && index === 0 ? " is-done" : ""
+                      }`}
+                    >
+                      <span className="auth-step-mark" aria-hidden="true">
+                        {phase === "complete" && index === 0 ? (
+                          <Icons.check size={13} />
+                        ) : (
+                          index + 1
+                        )}
+                      </span>
+                      {step.label}
+                    </li>
+                  ))}
+                </ol>
+              )}
             </header>
 
             {notice && (
@@ -241,39 +369,55 @@ export default function AuthScreen({
             {phase === "setup" && (
               <>
                 <p className="auth-hint">
-                  اقرأ الرمز من الملف <code dir="ltr">.data/setup-token</code> على السيرفر. يُحذف بعد
-                  إنشاء الحساب ولا يظهر في الموقع العام.
+                  اقرأ الرمز من الملف <code dir="ltr">.data/setup-token</code>{" "}
+                  على السيرفر. يُحذف بعد إنشاء الحساب ولا يظهر في الموقع العام.
                 </p>
-                <Field label="رمز الإعداد" required>
+                <Field label="رمز الإعداد" required error={fieldErrors.token}>
                   <TextInput
                     value={token}
                     onChange={setToken}
                     dir="ltr"
                     autoComplete="off"
                     placeholder="64 حرفًا"
+                    invalid={Boolean(fieldErrors.token)}
+                  />
+                </Field>
+                <Field
+                  label="كلمة مرور المالك"
+                  required
+                  hint="١٢ حرفًا على الأقل."
+                  error={fieldErrors.password}
+                >
+                  <PasswordInput
+                    value={password}
+                    onChange={setPassword}
+                    autoComplete="new-password"
+                    invalid={Boolean(fieldErrors.password)}
                   />
                 </Field>
               </>
             )}
 
-            {phase === "setup" && (
-              <Field label="كلمة مرور المالك" required hint="١٢ حرفًا على الأقل.">
-                <TextInput
-                  value={password}
-                  onChange={setPassword}
-                  type="password"
-                  dir="ltr"
-                  autoComplete="new-password"
-                />
-              </Field>
-            )}
-
             {phase === "complete" && (
               <>
-                <Field label="الاسم الظاهر" required>
-                  <TextInput value={displayName} onChange={setDisplayName} placeholder="مثال: محمد نجيب" />
+                <Field
+                  label="الاسم الظاهر"
+                  required
+                  error={fieldErrors.displayName}
+                >
+                  <TextInput
+                    value={displayName}
+                    onChange={setDisplayName}
+                    placeholder="مثال: محمد نجيب"
+                    invalid={Boolean(fieldErrors.displayName)}
+                  />
                 </Field>
-                <Field label="البريد الإلكتروني" required hint="يُستخدم لتسجيل الدخول لاحقًا.">
+                <Field
+                  label="البريد الإلكتروني"
+                  required
+                  hint="يُستخدم لتسجيل الدخول لاحقًا."
+                  error={fieldErrors.email}
+                >
                   <TextInput
                     value={email}
                     onChange={setEmail}
@@ -281,48 +425,77 @@ export default function AuthScreen({
                     dir="ltr"
                     autoComplete="email"
                     placeholder="owner@example.com"
+                    invalid={Boolean(fieldErrors.email)}
                   />
                 </Field>
-                <Field label="كلمة المرور الجديدة" required hint="١٢ حرفًا على الأقل مع حروف وأرقام.">
-                  <TextInput
+                <Field
+                  label="كلمة المرور الجديدة"
+                  required
+                  hint="١٢ حرفًا على الأقل مع حروف وأرقام."
+                  error={fieldErrors.password}
+                >
+                  <PasswordInput
                     value={password}
                     onChange={setPassword}
-                    type="password"
-                    dir="ltr"
                     autoComplete="new-password"
+                    invalid={Boolean(fieldErrors.password)}
                   />
                 </Field>
-                <Field label="سؤال الأمان" required hint="اكتب سؤالًا تعرف إجابته وحدك.">
-                  <TextInput value={question} onChange={setQuestion} placeholder="مثال: مدينة الميلاد؟" />
+                <Field
+                  label="سؤال الأمان"
+                  required
+                  hint="اكتب سؤالًا تعرف إجابته وحدك."
+                  error={fieldErrors.question}
+                >
+                  <TextInput
+                    value={question}
+                    onChange={setQuestion}
+                    placeholder="مثال: مدينة الميلاد؟"
+                    invalid={Boolean(fieldErrors.question)}
+                  />
                 </Field>
                 <Field
                   label="إجابة سؤال الأمان"
                   required
                   hint="تُخزَّن مشفّرة ولا تظهر أبدًا في أي شاشة."
+                  error={fieldErrors.answer}
                 >
-                  <TextInput value={answer} onChange={setAnswer} autoComplete="off" />
+                  <TextInput
+                    value={answer}
+                    onChange={setAnswer}
+                    autoComplete="off"
+                    invalid={Boolean(fieldErrors.answer)}
+                  />
                 </Field>
               </>
             )}
 
             {phase === "login" && (
               <>
-                <Field label="البريد الإلكتروني أو اسم المستخدم" required>
+                <Field
+                  label="البريد الإلكتروني أو اسم المستخدم"
+                  required
+                  error={fieldErrors.identifier}
+                >
                   <TextInput
                     value={identifier}
                     onChange={setIdentifier}
                     dir="ltr"
                     autoComplete="username"
                     placeholder="owner@example.com"
+                    invalid={Boolean(fieldErrors.identifier)}
                   />
                 </Field>
-                <Field label="كلمة المرور" required>
-                  <TextInput
+                <Field
+                  label="كلمة المرور"
+                  required
+                  error={fieldErrors.password}
+                >
+                  <PasswordInput
                     value={password}
                     onChange={setPassword}
-                    type="password"
-                    dir="ltr"
                     autoComplete="current-password"
+                    invalid={Boolean(fieldErrors.password)}
                   />
                 </Field>
               </>
@@ -337,12 +510,18 @@ export default function AuthScreen({
                     <strong>{currentQuestion}</strong>
                   </div>
                 </div>
-                <Field label="الإجابة" required hint="لا تظهر الإجابة على الشاشة أبدًا.">
+                <Field
+                  label="الإجابة"
+                  required
+                  hint="لا تظهر الإجابة على الشاشة أبدًا."
+                  error={fieldErrors.answer}
+                >
                   <TextInput
                     value={answer}
                     onChange={setAnswer}
                     autoComplete="off"
                     placeholder="اكتب إجابتك"
+                    invalid={Boolean(fieldErrors.answer)}
                   />
                 </Field>
               </>
@@ -361,7 +540,13 @@ export default function AuthScreen({
               size="lg"
               block
               loading={busy}
-              icon={phase === "security" ? <Icons.shield size={18} /> : <Icons.arrowUpLeft size={18} />}
+              icon={
+                phase === "security" ? (
+                  <Icons.shield size={18} />
+                ) : (
+                  <Icons.arrowUpLeft size={18} />
+                )
+              }
             >
               {phase === "setup"
                 ? "إنشاء الحساب"

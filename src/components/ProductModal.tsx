@@ -1,25 +1,57 @@
-import { useRef } from "react";
-import { X, Package, ArrowUpLeft, BadgePercent, Clock, Sparkles, Truck } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  X,
+  Package,
+  ArrowUpLeft,
+  BadgePercent,
+  Clock,
+  ShoppingBag,
+  Sparkles,
+  Truck,
+} from "lucide-react";
 import {
   isNewBadgeActive,
   isOrderable,
+  productImageIsIllustrative,
   stockLabel,
   type Product,
 } from "../../shared/content.ts";
+import { availableUnits, isPurchasable } from "../../shared/orders.ts";
 import { useContent } from "../content/ContentContext";
+import { useCart } from "../cart/CartContext";
 import { useDialog } from "../hooks/useDialog";
 import { waLink, orderMessage } from "../lib/whatsapp";
+import { PriceTag, QuantityStepper } from "./commerce/Bits";
 import { ProductImage, WhatsAppIcon } from "./shared";
+
 export default function ProductModal({
   product: p,
   onClose,
+  onSelect,
 }: {
   product: Product;
   onClose: () => void;
+  /** Lets a related product open in place of this one. */
+  onSelect?: (product: Product) => void;
 }) {
-  const { contentStatus, site } = useContent();
+  const { contentStatus, site, products, commerce } = useContent();
+  const cart = useCart();
   const ref = useDialog(onClose),
     start = useRef(0);
+  const [quantity, setQuantity] = useState(1);
+  const [flash, setFlash] = useState("");
+  const stock = availableUnits(p);
+  const purchasable = cart.ordersEnabled && isPurchasable(p);
+  const related = products
+    .filter((item) => item.id !== p.id && item.category === p.category)
+    .slice(0, 3);
+
+  // A different product in the same dialog starts from a clean state.
+  useEffect(() => {
+    setQuantity(1);
+    setFlash("");
+  }, [p.id]);
+
   return (
     <div
       className="modal-backdrop"
@@ -96,18 +128,63 @@ export default function ProductModal({
               </span>
             )}
           </div>
+          <PriceTag
+            price={p.price}
+            discountPercent={p.discountPercent}
+            currency={commerce.currency}
+            size="lg"
+          />
           {p.size !== "—" && (
             <span className="product-size">
               <Package size={18} />
               {p.size}
             </span>
           )}
+          {p.availability === "available" && p.quantity !== null && p.quantity > 0 && (
+            <small className="muted">المتاح حاليًا: {p.quantity}</small>
+          )}
           <p>{p.longDesc}</p>
-          {contentStatus.placeholderProductIds.includes(p.id) && (
+          {productImageIsIllustrative(p, contentStatus) && (
             <small className="muted">
               الصورة توضيحية وسيتم تحديثها بصورة المنتج.
             </small>
           )}
+
+          {purchasable && (
+            <div className="modal-buy">
+              <QuantityStepper
+                value={quantity}
+                max={stock}
+                label={p.name}
+                onChange={(next) =>
+                  setQuantity(
+                    Math.max(1, Math.min(next, stock ?? 99)),
+                  )
+                }
+              />
+              <button
+                type="button"
+                className="primary-button add-to-cart"
+                onClick={() => {
+                  const result = cart.add(p, quantity);
+                  setFlash(result.ok ? "تمت الإضافة إلى السلة" : (result.reason ?? ""));
+                  if (result.ok) {
+                    onClose();
+                    cart.open();
+                  }
+                }}
+              >
+                <ShoppingBag size={18} aria-hidden="true" />
+                أضف إلى السلة
+              </button>
+            </div>
+          )}
+          {flash && (
+            <p className="muted small" role="status">
+              {flash}
+            </p>
+          )}
+
           {isOrderable(p) ? (
             <a
               className="wa-button"
@@ -125,6 +202,40 @@ export default function ProductModal({
               {p.availability === "coming_soon" ? "قريبًا بإذن الله" : "غير متاح حاليًا"}
             </span>
           )}
+
+          {related.length > 0 && onSelect && (
+            <section className="related-products" aria-label="منتجات مشابهة">
+              <h3>من نفس التصنيف</h3>
+              <ul>
+                {related.map((item) => (
+                  <li key={item.id}>
+                    <button type="button" onClick={() => onSelect(item)}>
+                      <span className="related-thumb" aria-hidden="true">
+                        {item.img || item.fallback ? (
+                          <ProductImage
+                            src={item.img}
+                            webp={item.webp}
+                            fallback={item.fallback}
+                            alt=""
+                          />
+                        ) : (
+                          <Package size={18} />
+                        )}
+                      </span>
+                      <span className="related-name">{item.name}</span>
+                      <PriceTag
+                        price={item.price}
+                        discountPercent={item.discountPercent}
+                        currency={commerce.currency}
+                        size="sm"
+                      />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           <button className="secondary-button" onClick={onClose}>
             إغلاق
           </button>

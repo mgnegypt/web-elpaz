@@ -105,6 +105,33 @@ an attack "works".
   filter had no styling, and several controls were below the touch-target
   minimum.
 
+## Customer orders
+
+- **Order access is capability-based.** The reference (`EB-YYMMDD-XXXXX`) identifies an
+  order but does not open it: a 24-byte random token is generated once at creation,
+  returned to the browser that placed the order, and stored only as a SHA-256 hash
+  (`orders.access_hash`). `GET /api/orders/:reference?token=…` hashes the supplied token
+  and compares with `timingSafeEqual`; a wrong or missing token answers `404`, the same as
+  an unknown reference, so references cannot be probed.
+- **Customers see a filtered projection.** `publicOrder()` strips the row id, the IP
+  recorded with the submission, the actor on each status change and every internal note.
+- **No customer accounts, no customer passwords.** The browser keeps a list of the orders
+  it placed (reference + token) in `localStorage` purely as a convenience; it is not an
+  identity, and the server never trusts it.
+- **Writes are server-authoritative.** `POST /api/orders` re-prices every line from the
+  stored catalogue, so a tampered basket cannot change what is charged. Stock reservation
+  and the order insert share one `BEGIN IMMEDIATE` transaction with the content
+  compare-and-set guard, so a lost update cannot oversell.
+- **Admin-only mutation.** Listing orders, reading one by id and changing a status all sit
+  behind the admin router (session + same-origin + CSRF); status moves are validated
+  against `ORDER_STATUS_TRANSITIONS` and written to the audit log.
+- **Abuse controls.** The public order endpoint uses the write rate limiter, a honeypot
+  field (logged as suspicious), the same-origin check and an idempotency key.
+- **Not indexed.** `/order` and `/checkout` answer with `X-Robots-Tag: noindex, nofollow`,
+  carry a `robots` meta tag and are disallowed in `robots.txt`.
+- **No payment data.** No card details are collected, stored or transmitted; there is no
+  payment provider integration and no gateway credentials in the codebase.
+
 ## Remaining risks (accepted)
 
 1. **Non-script junk in uploads.** Magic bytes prove the file _starts_ like an
@@ -126,7 +153,10 @@ an attack "works".
    grow unboundedly (rows expire and are removed when sessions are pruned), but
    a scheduled purge would be tidier.
 6. **Header-only magic bytes** for formats we do not re-encode (see 1).
-7. **`Math.random` fallback** in the request-key generator. The primary path uses
+7. **Order tokens live in the customer's URL.** Anyone the customer forwards the link to
+   can open that receipt. This is the usual trade-off for guest checkout without accounts;
+   the alternative (an account system) was deliberately not added.
+8. **`Math.random` fallback** in the request-key generator. The primary path uses
    `crypto.randomUUID()`; the fallback only matters on runtimes without it.
 
 ## Production checklist

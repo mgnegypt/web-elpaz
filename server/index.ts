@@ -42,6 +42,18 @@ const imageHosts = (process.env.ALLOWED_IMAGE_HOSTS ?? "")
 
 const production = process.env.NODE_ENV === "production";
 
+/**
+ * Per-IP budget for GET /api/content in a 15 minute window. Every visitor
+ * reads it on every page load, so it deliberately sits far above the generic
+ * API budget (see createApp). Behind a proxy that does not forward client IPs
+ * the whole site shares one bucket, which is exactly how a busy hour turns
+ * into "the site shows the old content again".
+ */
+const publicReadLimit = Math.max(
+  60,
+  Number(process.env.PUBLIC_READ_LIMIT) || 3000,
+);
+
 const { app, db } = createApp({
   dataDir,
   distDir: existsSync(join(projectRoot, "dist"))
@@ -52,11 +64,40 @@ const { app, db } = createApp({
   // The end-to-end suites sign in many times from one address; production keeps
   // the real limits (see createApp in server/app.ts).
   relaxRateLimits: process.env.NODE_ENV === "test",
+  publicReadLimit,
 });
 
 const server = app.listen(port, "0.0.0.0", () => {
   console.log(`[elban-elbaz] API + site listening on http://0.0.0.0:${port}`);
   console.log(`[elban-elbaz] data directory: ${dataDir}`);
+  // Which database is this process actually serving, and did it find content?
+  // A deployment that starts in a new release directory, with DATA_DIR unset
+  // or pointing somewhere else, silently creates an empty database and seeds
+  // the bundled demo content — which looks exactly like "the site reverted to
+  // defaults". These three lines make that impossible to miss.
+  const { file, provenance } = db;
+  const health = db.contentHealth();
+  console.log(
+    `[elban-elbaz] content database: ${file} (${provenance.createdDatabase ? "created now" : "existing"})`,
+  );
+  console.log(
+    `[elban-elbaz] content revision ${health.revision}` +
+      (health.updatedAt ? `, last published ${health.updatedAt}` : "") +
+      (health.ok ? "" : ` — UNREADABLE: ${health.issues.join(" | ")}`),
+  );
+  if (provenance.seededDefaults) {
+    console.warn(
+      "[elban-elbaz] WARNING: no content row was found, so the bundled demo content was seeded. " +
+        "If this server already had published content, it is pointing at the WRONG data directory — " +
+        `stop it and set DATA_DIR to the directory holding the real elbaz.sqlite (current: ${dataDir}).`,
+    );
+  }
+  if (!health.ok) {
+    console.error(
+      "[elban-elbaz] ERROR: the stored content document does not match the schema. " +
+        "/api/content answers 503 and visitors keep the last copy they loaded; fix the document and republish.",
+    );
+  }
   if (db.adminCount() === 0) {
     console.log(
       `[elban-elbaz] first-run setup token file: ${db.setupTokenPath} (open /admin and paste its contents)`,

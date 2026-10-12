@@ -103,6 +103,34 @@ export const AVAILABILITY_LABELS: Record<Availability, string> = {
   coming_soon: "قريبًا",
 };
 
+/**
+ * Authenticity of a single piece of content (a product photo, a review).
+ *
+ * Three states on purpose:
+ *  - `genuine`      — an administrator confirmed this is the real thing.
+ *  - `illustrative` — an administrator marked it as a temporary stand-in.
+ *  - `unspecified`  — nobody has decided yet. Never guessed from the data
+ *    itself (a URL, an upload or a rating prove nothing); the legacy
+ *    `contentStatus` flags below decide how an unspecified record is shown,
+ *    which keeps every pre-existing document rendering exactly as before.
+ */
+export const AUTHENTICITY = ["unspecified", "genuine", "illustrative"] as const;
+export type Authenticity = (typeof AUTHENTICITY)[number];
+/** Optional everywhere: an older stored document simply reads as "unspecified". */
+export const authenticitySchema = z.enum(AUTHENTICITY).default("unspecified");
+
+export const PRODUCT_IMAGE_AUTHENTICITY_LABELS: Record<Authenticity, string> = {
+  unspecified: "لم يُحدَّد بعد",
+  genuine: "صورة المنتج الحقيقية",
+  illustrative: "صورة توضيحية مؤقتة",
+};
+
+export const REVIEW_AUTHENTICITY_LABELS: Record<Authenticity, string> = {
+  unspecified: "لم يُحدَّد بعد",
+  genuine: "رأي عميل حقيقي",
+  illustrative: "رأي توضيحي (نموذج)",
+};
+
 export const productSchema = z.object({
   id: z.number().int().positive(),
   category: text(1, 60, "التصنيف"),
@@ -116,6 +144,15 @@ export const productSchema = z.object({
   webp: safeImageUrl("رابط WebP"),
   color: hexColor.default("#f3e3c3"),
   // ---- orderability / stock (all optional so pre-existing content still loads) ----
+  /**
+   * Selling price per unit, set by the owner in the dashboard.
+   *
+   * `null` means "no published price": the product is shown with
+   * «السعر عند الطلب» and can only be ordered through WhatsApp/phone, never
+   * added to the cart. A price is never guessed or back-filled — it has to be
+   * entered by the business.
+   */
+  price: z.number().finite().min(0).max(1_000_000).nullable().default(null),
   availability: z.enum(AVAILABILITY).default("available"),
   /** null means "not tracked" (e.g. unlimited). */
   quantity: z.number().finite().min(0).max(1_000_000).nullable().default(null),
@@ -127,6 +164,12 @@ export const productSchema = z.object({
   discountPercent: z.number().finite().min(0).max(90).default(0),
   /** Optional free-text badge (e.g. "عرض الموسم"); empty hides it. */
   badge: z.string().trim().max(24).default(""),
+  /**
+   * Is the picture above the product's own photo, or a stand-in?
+   * Set by an administrator in the dashboard. Missing = "unspecified", which
+   * falls back to the legacy `contentStatus.placeholderProductIds` list.
+   */
+  imageAuthenticity: authenticitySchema,
 });
 
 export const heroSlideSchema = z.object({
@@ -143,11 +186,47 @@ export const faqSchema = z.object({
   q: text(1, 200, "السؤال"),
   a: text(1, 800, "الإجابة"),
 });
+
+/**
+ * Customer rating.
+ *
+ * Decimals are first-class: 4.5 and 4.8 are valid and are stored as written.
+ * Only the range is enforced (1…5) plus a single decimal place, so the star
+ * control, a typed value and the public site always agree. 0, 5.1, -1, 10 and
+ * NaN are rejected by the schema, never silently rounded into range.
+ */
+export const RATING_MIN = 1;
+export const RATING_MAX = 5;
+/** The star control steps in halves; typed values may use one decimal. */
+export const RATING_STEP = 0.5;
+export const RATING_PRECISION_STEP = 0.1;
+
+/** Keeps one decimal place (4.5 → 4.5, 4.85 → 4.9) without changing the value's meaning. */
+export const roundRating = (value: number) => Math.round(value * 10) / 10;
+
+/** Clamps a typed number into the valid range — used by the UI, never by the schema. */
+export const clampRating = (value: number) =>
+  roundRating(Math.min(RATING_MAX, Math.max(RATING_MIN, value)));
+
+export const ratingSchema = z
+  .number({ invalid_type_error: "التقييم يجب أن يكون رقمًا بين ١ و٥" })
+  .finite({ message: "التقييم غير صالح" })
+  .min(RATING_MIN, { message: "أقل تقييم هو ١" })
+  .max(RATING_MAX, { message: "أعلى تقييم هو ٥" })
+  .transform(roundRating);
+
 export const reviewSchema = z.object({
   name: text(1, 80, "الاسم"),
   role: text(1, 80, "الصفة"),
-  rating: z.number().int().min(1).max(5),
+  rating: ratingSchema,
   text: text(1, 600, "النص"),
+  /**
+   * A real customer opinion, or a sample written to fill the section?
+   * Never derived from the rating: a genuine one-star review is still genuine.
+   * Missing = "unspecified", which falls back to the legacy
+   * `contentStatus.testimonialsArePlaceholders` switch.
+   */
+  authenticity: authenticitySchema,
 });
 export const galleryItemSchema = z.object({
   src: safeImageUrl("رابط الصورة"),
@@ -272,6 +351,56 @@ export const seoSchema = z.object({
 });
 
 /** The full editable document, minus the database-managed revision. */
+/* -------------------------------------------------------------- commerce */
+
+/**
+ * A delivery area the business actually serves, with the fee it actually
+ * charges. The list starts empty on purpose: until the owner adds a zone, the
+ * storefront says the delivery fee is agreed when the order is confirmed
+ * instead of inventing one.
+ */
+export const deliveryZoneSchema = z.object({
+  id: z.string().trim().min(1).max(40),
+  name: text(1, 60, "اسم المنطقة"),
+  fee: z.number().finite().min(0).max(100_000),
+  note: z.string().trim().max(120).default(""),
+});
+
+export const commerceSchema = z
+  .object({
+    /**
+     * Master switch for online ordering. Even when on, a product only becomes
+     * purchasable once it has a price, so switching this on cannot by itself
+     * put an unpriced catalogue on sale.
+     */
+    ordersEnabled: z.boolean().default(true),
+    currency: z.string().trim().min(1).max(10).default("ج.م"),
+    /**
+     * Cash on delivery is a business policy, so it stays off until the owner
+     * turns it on. While off, checkout records «يُتفق عليه عند تأكيد الطلب».
+     */
+    codEnabled: z.boolean().default(false),
+    deliveryZones: z.array(deliveryZoneSchema).max(60).default([]),
+    /** Subtotal at or above which delivery is free. null = no such offer. */
+    freeDeliveryOver: z
+      .number()
+      .finite()
+      .min(0)
+      .max(1_000_000)
+      .nullable()
+      .default(null),
+    /** Smallest subtotal the business accepts. 0 = no minimum. */
+    minOrderTotal: z.number().finite().min(0).max(1_000_000).default(0),
+    /** Owner-written note shown at checkout (delivery times, areas, …). */
+    checkoutNote: z.string().trim().max(400).default(""),
+    /** Offer a prefilled WhatsApp summary after the order is created. */
+    whatsappSummary: z.boolean().default(true),
+  })
+  .default({});
+
+export type Commerce = z.infer<typeof commerceSchema>;
+export type DeliveryZone = z.infer<typeof deliveryZoneSchema>;
+
 export const contentSchema = z.object({
   site: siteSchema,
   hero: z.object({
@@ -298,6 +427,7 @@ export const contentSchema = z.object({
     .max(12),
   contentStatus: contentStatusSchema,
   seo: seoSchema,
+  commerce: commerceSchema,
 });
 
 export type Content = z.infer<typeof contentSchema>;
@@ -344,6 +474,71 @@ export type HeroSlide = z.infer<typeof heroSlideSchema>;
 export type Faq = z.infer<typeof faqSchema>;
 export type Review = z.infer<typeof reviewSchema>;
 export type GalleryItem = z.infer<typeof galleryItemSchema>;
+export type ContentStatus = z.infer<typeof contentStatusSchema>;
+
+/* ---------------------------------------------------------------------------
+ * Authenticity rules — one implementation, used by the public site, the
+ * dashboard preview and the tests, so the three can never disagree.
+ * -------------------------------------------------------------------------*/
+
+/**
+ * Should the "الصورة توضيحية" disclaimer appear under this product?
+ *
+ * An explicit per-product decision always wins. Only when an administrator has
+ * not decided yet do we consult the legacy id list, which is how every
+ * document written before this field existed keeps its current appearance.
+ */
+export const productImageIsIllustrative = (
+  product: Pick<Product, "id" | "imageAuthenticity">,
+  status: Pick<ContentStatus, "placeholderProductIds">,
+): boolean => {
+  if (product.imageAuthenticity === "genuine") return false;
+  if (product.imageAuthenticity === "illustrative") return true;
+  return status.placeholderProductIds.includes(product.id);
+};
+
+/**
+ * Should the "رأي توضيحي" disclaimer appear under this review?
+ *
+ * The rating is deliberately not part of the decision: a genuine complaint
+ * rated 1/5 is still a genuine customer opinion.
+ */
+export const reviewIsIllustrative = (
+  review: Pick<Review, "authenticity">,
+  status: Pick<ContentStatus, "testimonialsArePlaceholders">,
+): boolean => {
+  if (review.authenticity === "genuine") return false;
+  if (review.authenticity === "illustrative") return true;
+  return status.testimonialsArePlaceholders;
+};
+
+/** Products still shown as illustrative only because of the legacy id list. */
+export const unclassifiedIllustrativeProducts = <
+  T extends Pick<Product, "id" | "imageAuthenticity">,
+>(
+  products: T[],
+  status: Pick<ContentStatus, "placeholderProductIds">,
+): T[] =>
+  products.filter(
+    (product) =>
+      product.imageAuthenticity === "unspecified" &&
+      status.placeholderProductIds.includes(product.id),
+  );
+
+/**
+ * Reviews still shown as illustrative only because the global
+ * `testimonialsArePlaceholders` switch is on and nobody has classified them.
+ * These are the ones the dashboard offers to settle in one step.
+ */
+export const unclassifiedIllustrativeReviews = <
+  T extends Pick<Review, "authenticity">,
+>(
+  reviews: T[],
+  status: Pick<ContentStatus, "testimonialsArePlaceholders">,
+): T[] =>
+  status.testimonialsArePlaceholders
+    ? reviews.filter((review) => review.authenticity === "unspecified")
+    : [];
 
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 

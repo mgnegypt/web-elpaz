@@ -1,0 +1,435 @@
+/* ===========================================================================
+   Application shell: sidebar, top bar, main column, boot screen.
+   Desktop = permanent sidebar + sticky top bar. Tablet/phone = off-canvas
+   sidebar driven by the same markup, so nothing is duplicated.
+   =========================================================================== */
+
+.admin-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  background:
+    radial-gradient(
+      900px 420px at 100% -8%,
+      color-mix(in srgb, var(--dash-primary) 7%, transparent),
+      transparent 62%
+    ),
+    var(--dash-bg);
+  color: var(--dash-text);
+}
+
+/* Collapsed desktop rail: icons keep a short label — never icon-only. */
+.admin-shell[data-rail="true"] {
+  --sidebar-w: var(--sidebar-rail);
+}
+
+/* ------------------------------------------------------------------ sidebar */
+
+.admin-shell .sidebar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-3);
+  background: var(--dash-surface);
+  border-inline-end: 1px solid var(--dash-line);
+}
+
+.admin-shell .sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px var(--sp-3);
+  border-bottom: 1px solid var(--dash-line-soft);
+  min-width: 0;
+}
+.admin-shell .sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.admin-shell .sidebar-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border-radius: var(--r-sm);
+  background: var(--dash-primary);
+  color: #fff;
+}
+.admin-shell .sidebar-brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+  min-width: 0;
+}
+.admin-shell .sidebar-brand-text strong {
+  font-size: var(--fs-md);
+  font-weight: 800;
+  white-space: nowrap;
+}
+.admin-shell .sidebar-brand-text span {
+  font-size: var(--fs-xs);
+  color: var(--dash-muted);
+  white-space: nowrap;
+}
+.admin-shell .sidebar-head-tools {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.admin-shell .sidebar-close {
+  display: none;
+}
+
+.admin-shell .sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-2) 0;
+  flex: 1;
+  min-height: 0;
+}
+.admin-shell .nav-section {
+  margin: var(--sp-3) 0 2px;
+  padding-inline: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--dash-muted);
+}
+
+.admin-shell .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--dash-text-2);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  text-align: start;
+  cursor: pointer;
+  min-height: 42px;
+}
+.admin-shell .nav-item svg {
+  flex: 0 0 auto;
+}
+.admin-shell .nav-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-shell .nav-item:hover {
+  background: var(--dash-surface-3);
+  color: var(--dash-text);
+}
+.admin-shell .nav-item--active {
+  background: var(--dash-primary-soft);
+  color: var(--dash-primary-ink);
+}
+.admin-shell .nav-item--active::before {
+  content: "";
+  width: 3px;
+  height: 18px;
+  border-radius: var(--r-pill);
+  background: var(--dash-primary);
+  margin-inline-start: -6px;
+}
+.admin-shell .nav-item--danger {
+  color: var(--dash-danger);
+}
+.admin-shell .nav-item--danger:hover {
+  background: var(--dash-danger-soft);
+  color: var(--dash-danger);
+}
+.admin-shell .nav-badge {
+  margin-inline-start: auto;
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--dash-warn-soft);
+  color: var(--dash-warn);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.admin-shell .sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--dash-line-soft);
+}
+.admin-shell .sidebar-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 6px;
+  border-radius: var(--r-sm);
+  background: var(--dash-surface-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--dash-muted);
+}
+
+.sidebar-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  background: var(--dash-scrim);
+  border: 0;
+  padding: 0;
+  animation: dash-fade-in var(--dur-2) var(--ease) both;
+}
+
+/* ------------------------------------------------------------------- topbar */
+
+.admin-shell .admin-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-shell .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: var(--topbar-h);
+  padding: 0 var(--sp-5);
+  background: color-mix(in srgb, var(--dash-bg) 86%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--dash-line);
+}
+.admin-shell .topbar-menu {
+  display: none;
+}
+.admin-shell .topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.admin-shell .topbar-label {
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.admin-shell .live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  background: var(--dash-surface-3);
+  color: var(--dash-muted);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.admin-shell .live-chip--on {
+  background: var(--dash-success-soft);
+  color: var(--dash-success);
+}
+.admin-shell .topbar-actions {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+/* The bar has to survive very small layout widths — a 320px phone at 200%
+   zoom leaves only 160px of layout space. Its controls give up their
+   comfortable size before the page is allowed to scroll sideways; at normal
+   widths there is room, so nothing shrinks and taps stay 44px. */
+.admin-shell .topbar .topbar-menu,
+.admin-shell .topbar .topbar-actions > * {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.admin-shell .stale-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, var(--dash-warn) 40%, transparent);
+  background: var(--dash-warn-soft);
+  color: var(--dash-warn);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.admin-shell .profile-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--dash-line);
+  border-radius: var(--r-pill);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  font-family: inherit;
+  cursor: pointer;
+  min-width: 0;
+  max-width: 230px;
+}
+.admin-shell .profile-chip:hover {
+  border-color: var(--dash-line-strong);
+  background: var(--dash-surface-2);
+}
+.admin-shell .profile-chip img,
+.admin-shell .avatar-fallback {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.admin-shell .avatar-fallback {
+  display: grid;
+  place-items: center;
+  background: var(--dash-primary-soft);
+  color: var(--dash-primary-ink);
+  font-weight: 800;
+  font-size: var(--fs-md);
+}
+.admin-shell .profile-chip-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.3;
+  min-width: 0;
+}
+.admin-shell .profile-chip-text strong {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-shell .profile-chip-text small {
+  font-size: 11.5px;
+  color: var(--dash-muted);
+}
+
+/* The public theme toggle is reused; align it with the dashboard chrome.
+   The public rule pins it to a fixed corner — inside the dashboard it is a
+   normal control in the flow (top bar, or the login card header). */
+.dash .theme-toggle {
+  position: static;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  transform: none;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--dash-line);
+  background: var(--dash-surface);
+  color: var(--dash-text-2);
+  box-shadow: none;
+}
+.dash .theme-toggle:hover {
+  background: var(--dash-surface-2);
+  color: var(--dash-text);
+  transform: none;
+}
+
+/* --------------------------------------------------------------------- main */
+
+.admin-shell .admin-main {
+  /* Focusing the region on a section change must not tuck the heading under
+     the sticky top bar. */
+  scroll-margin-top: calc(var(--topbar-h) + var(--sp-3));
+  width: 100%;
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  min-width: 0;
+}
+.admin-shell .panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  min-width: 0;
+  animation: dash-page-in var(--dur-3) var(--ease-out) both;
+}
+
+/* --------------------------------------------------------------- boot screen */
+
+.admin-boot {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  padding: var(--sp-6);
+  background: var(--dash-bg);
+  color: var(--dash-text);
+}
+.admin-boot .boot-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.admin-boot .boot-mark {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--r-md);
+  background: var(--dash-primary);
+  color: #fff;
+}
+.admin-boot .boot-brand div {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.4;
+}
+.admin-boot .boot-brand strong {
+  font-size: var(--fs-lg);
+  font-weight: 800;
+}
+.admin-boot .boot-brand span {
+  font-size: var(--fs-sm);
+  color: var(--dash-muted);
+}
+.admin-boot .boot-cards {
+  display: grid;
+  gap: var(--sp-3);
+  width: min(100%, 520px);
+}

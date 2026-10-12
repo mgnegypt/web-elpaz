@@ -9,7 +9,7 @@ import {
   chmodSync,
 } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   DEFAULT_CONTENT,
   REQUEST_STATUSES,
@@ -23,6 +23,19 @@ import {
   type SiteEvent,
   type WholesaleRequest,
 } from "../shared/content.ts";
+import {
+  canTransition,
+  priceOrder,
+  round2,
+  type Order,
+  type OrderDraft,
+  type OrderItem,
+  type OrderStats,
+  type OrderStatus,
+  type PaymentMethod,
+  type PaymentStatus,
+  type PricingProblem,
+} from "../shared/orders.ts";
 
 export const SETUP_TOKEN_LENGTH = 64;
 
@@ -72,6 +85,34 @@ export type Db = {
     total: number;
   };
   getRequest: (id: number) => WholesaleRequest | null;
+  /**
+   * Creates a customer order. Prices, stock and delivery fees are read from
+   * the stored catalogue inside one transaction, so nothing the browser sent
+   * can change what is charged. Returns the raw access token exactly once —
+   * only its hash is stored.
+   */
+  createOrder: (input: OrderCreateInput) => {
+    order: Order;
+    created: boolean;
+    conflict: boolean;
+    accessToken: string | null;
+  };
+  /** Customer lookup: needs both the reference and the matching token. */
+  getOrderByReference: (reference: string, token: string) => Order | null;
+  getOrder: (id: number) => Order | null;
+  listOrders: (opts: OrderListOptions) => { items: Order[]; total: number };
+  setOrderStatus: (
+    id: number,
+    status: OrderStatus,
+    actor: { id: number | null; name: string },
+    note?: string,
+  ) => Order;
+  setOrderPayment: (
+    id: number,
+    paymentStatus: PaymentStatus,
+    actor: { id: number | null; name: string },
+  ) => Order;
+  orderStats: () => OrderStats;
   setRequestStatus: (
     id: number,
     status: RequestStatus,
@@ -116,7 +157,90 @@ export type Db = {
   readSetupToken: () => string | null;
   consumeSetupToken: () => void;
   close: () => void;
+  /** Absolute path of the SQLite file actually in use. */
+  file: string;
+  /**
+   * How this process found its content on startup. Deployment accidents (a
+   * second data directory, a relative DATA_DIR resolved from another working
+   * directory, a fresh volume) all look the same from the outside — the site
+   * suddenly shows the bundled demo content again — so the facts are recorded
+   * once at boot and reported in the logs and in /api/health.
+   */
+  provenance: {
+    /** The SQLite file did not exist when this process opened it. */
+    createdDatabase: boolean;
+    /** The content row was empty, so DEFAULT_CONTENT was written. */
+    seededDefaults: boolean;
+    /** Revision found at startup (1 = untouched seed). */
+    revisionAtBoot: number;
+    updatedAtBoot: string;
+  };
+  /** Cheap integrity probe for the content row; never throws. */
+  contentHealth: () => {
+    ok: boolean;
+    revision: number;
+    updatedAt: string;
+    issues: string[];
+  };
 };
+
+export type OrderCreateInput = OrderDraft & { ip?: string };
+
+export type OrderListOptions = {
+  search?: string;
+  status?: string;
+  limit: number;
+  offset: number;
+};
+
+/**
+ * Why an order could not be created. `problems` carries the per-product
+ * detail so the checkout can point at the exact line that went stale.
+ */
+export class OrderRejected extends Error {
+  code:
+    | "orders-disabled"
+    | "items"
+    | "below-minimum"
+    | "zone-required"
+    | "payment-unavailable"
+    | "empty";
+  problems: PricingProblem[];
+  detail: string;
+  constructor(
+    code: OrderRejected["code"],
+    detail = "",
+    problems: PricingProblem[] = [],
+  ) {
+    super(code);
+    this.name = "OrderRejected";
+    this.code = code;
+    this.detail = detail;
+    this.problems = problems;
+  }
+}
+
+/** Thrown when an administrator asks for a status move the flow forbids. */
+export class InvalidStatusTransition extends Error {
+  from: OrderStatus;
+  to: OrderStatus;
+  constructor(from: OrderStatus, to: OrderStatus) {
+    super("invalid-transition");
+    this.name = "InvalidStatusTransition";
+    this.from = from;
+    this.to = to;
+  }
+}
+
+/** Thrown when the stored document cannot be read as valid content. */
+export class ContentUnreadable extends Error {
+  issues: string[];
+  constructor(issues: string[]) {
+    super("content-unreadable");
+    this.name = "ContentUnreadable";
+    this.issues = issues;
+  }
+}
 
 export type AdminRow = {
   id: number;
@@ -250,6 +374,8 @@ export function openDb(dataDir: string): Db {
     /* not POSIX, or not the owner */
   }
   const file = join(dataDir, "elbaz.sqlite");
+  // Recorded before the file is opened: afterwards it always exists.
+  const createdDatabase = !existsSync(file);
   const raw = new DatabaseSync(file);
   for (const name of ["elbaz.sqlite", "elbaz.sqlite-wal", "elbaz.sqlite-shm"]) {
     try {
@@ -323,6 +449,67 @@ export function openDb(dataDir: string): Db {
     );
     CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_kind ON audit_log(kind);
+    CREATE TABLE IF NOT EXISTS orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reference TEXT NOT NULL UNIQUE,
+      /* sha256 of the customer's access token: the raw token only ever lives
+         in the link we hand the customer, never in the database. */
+      access_hash TEXT NOT NULL,
+      request_key TEXT,
+      fingerprint TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      customer_name TEXT NOT NULL,
+      customer_phone TEXT NOT NULL,
+      customer_alt_phone TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL,
+      area TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      delivery_zone_id TEXT NOT NULL DEFAULT '',
+      delivery_zone_name TEXT NOT NULL DEFAULT '',
+      payment_method TEXT NOT NULL DEFAULT 'on_confirmation',
+      payment_status TEXT NOT NULL DEFAULT 'unpaid',
+      currency TEXT NOT NULL DEFAULT '',
+      subtotal REAL NOT NULL DEFAULT 0,
+      discount_total REAL NOT NULL DEFAULT 0,
+      /* NULL means the delivery fee is agreed when the order is confirmed. */
+      shipping REAL,
+      total REAL NOT NULL DEFAULT 0,
+      item_count INTEGER NOT NULL DEFAULT 0,
+      /* 1 while this order still holds stock; cleared when cancelling returns it. */
+      stock_held INTEGER NOT NULL DEFAULT 1,
+      ip TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_request_key
+      ON orders(request_key) WHERE request_key IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+    CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at DESC);
+    CREATE TABLE IF NOT EXISTS order_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      size TEXT NOT NULL DEFAULT '',
+      unit_price REAL NOT NULL,
+      list_unit_price REAL NOT NULL,
+      discount_percent REAL NOT NULL DEFAULT 0,
+      quantity INTEGER NOT NULL,
+      line_total REAL NOT NULL,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+    CREATE TABLE IF NOT EXISTS order_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      actor_id INTEGER,
+      actor_name TEXT NOT NULL DEFAULT '',
+      at TEXT NOT NULL,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_order_events_order ON order_events(order_id);
   `);
 
   // --- additive migrations: safe to run against an existing database -----------------
@@ -361,17 +548,21 @@ export function openDb(dataDir: string): Db {
   const uploadsDir = join(dataDir, "uploads");
   mkdirSync(uploadsDir, { recursive: true });
 
-  // Seed exactly once. Existing published content is never overwritten by src/data.ts changes.
-  const existing = raw.prepare("SELECT COUNT(*) AS n FROM content").get() as {
-    n: number;
-  };
-  if (Number(existing.n) === 0) {
-    raw
-      .prepare(
-        "INSERT INTO content (id, json, revision, updated_at) VALUES (1, ?, 1, ?)",
-      )
-      .run(JSON.stringify(DEFAULT_CONTENT), nowIso());
-  }
+  // Seed exactly once, and only into a database that has no content row at all.
+  //
+  // This is the one place that can ever write DEFAULT_CONTENT, and it is
+  // guarded by a COUNT so a restart, a redeploy or an additive migration can
+  // never reset published content. `INSERT ... WHERE NOT EXISTS` makes the
+  // guard atomic as well, so two processes starting at the same moment cannot
+  // both decide the table is empty.
+  const seeded = raw
+    .prepare(
+      `INSERT INTO content (id, json, revision, updated_at)
+       SELECT 1, ?, 1, ?
+       WHERE NOT EXISTS (SELECT 1 FROM content WHERE id = 1)`,
+    )
+    .run(JSON.stringify(DEFAULT_CONTENT), nowIso());
+  const seededDefaults = Number(seeded.changes) > 0;
 
   const getRequest = (id: number): WholesaleRequest | null => {
     const row = raw
@@ -380,18 +571,280 @@ export function openDb(dataDir: string): Db {
     return row ? toRequest(row) : null;
   };
 
+  const contentRow = () =>
+    raw.prepare("SELECT json, revision, updated_at FROM content WHERE id = 1").get() as
+      | { json: string; revision: number; updated_at: string }
+      | undefined;
+
+  /**
+   * Reads the stored document.
+   *
+   * Validation stays strict — the site must never render a half-parsed
+   * document — but a failure is reported as ContentUnreadable with the exact
+   * field paths, so the API can answer 503 (keep your last good copy) instead
+   * of a blank 500, and the operator sees what to repair. New schema fields
+   * must always carry a `.default(...)` so an older stored document still
+   * parses; the api suite guards that.
+   */
   const getContent = (): ContentDoc => {
-    const row = raw
-      .prepare("SELECT json, revision FROM content WHERE id = 1")
-      .get() as { json: string; revision: number } | undefined;
-    if (!row) throw new Error("content-row-missing");
-    const parsed = contentSchema.parse(JSON.parse(row.json));
-    return { ...parsed, revision: Number(row.revision) };
+    const row = contentRow();
+    if (!row) throw new ContentUnreadable(["content row missing"]);
+    let data: unknown;
+    try {
+      data = JSON.parse(row.json);
+    } catch {
+      throw new ContentUnreadable(["stored content is not valid JSON"]);
+    }
+    const parsed = contentSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new ContentUnreadable(
+        parsed.error.issues
+          .slice(0, 10)
+          .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`),
+      );
+    }
+    return { ...parsed.data, revision: Number(row.revision) };
   };
+
+  const contentHealth = () => {
+    const row = contentRow();
+    if (!row)
+      return { ok: false, revision: 0, updatedAt: "", issues: ["content row missing"] };
+    try {
+      getContent();
+      return {
+        ok: true,
+        revision: Number(row.revision),
+        updatedAt: row.updated_at,
+        issues: [] as string[],
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        revision: Number(row.revision),
+        updatedAt: row.updated_at,
+        issues: error instanceof ContentUnreadable ? error.issues : ["unknown error"],
+      };
+    }
+  };
+
+  /* ------------------------------------------------------------- orders */
+
+  type OrderRow = {
+    id: number;
+    reference: string;
+    access_hash: string;
+    request_key: string | null;
+    fingerprint: string;
+    status: string;
+    customer_name: string;
+    customer_phone: string;
+    customer_alt_phone: string;
+    address: string;
+    area: string;
+    notes: string;
+    delivery_zone_id: string;
+    delivery_zone_name: string;
+    payment_method: string;
+    payment_status: string;
+    currency: string;
+    subtotal: number;
+    discount_total: number;
+    shipping: number | null;
+    total: number;
+    item_count: number;
+    stock_held: number;
+    ip: string;
+    created_at: string;
+    updated_at: string;
+  };
+  type OrderItemRow = {
+    order_id: number;
+    product_id: number;
+    name: string;
+    size: string;
+    unit_price: number;
+    list_unit_price: number;
+    discount_percent: number;
+    quantity: number;
+    line_total: number;
+  };
+  type OrderEventRow = {
+    order_id: number;
+    status: string;
+    note: string;
+    at: string;
+  };
+
+  const sha256 = (value: string) =>
+    createHash("sha256").update(value).digest("hex");
+
+  /**
+   * References are short enough to read over the phone but random enough that
+   * they cannot be walked one by one; the access token is what actually
+   * authorises a customer to open an order.
+   */
+  const REF_ALPHABET = "ACDEFGHJKLMNPQRTUVWXY3456789";
+  const makeReference = () => {
+    const now = new Date();
+    const stamp =
+      String(now.getUTCFullYear()).slice(2) +
+      String(now.getUTCMonth() + 1).padStart(2, "0") +
+      String(now.getUTCDate()).padStart(2, "0");
+    const bytes = randomBytes(5);
+    let tail = "";
+    for (const byte of bytes) tail += REF_ALPHABET[byte % REF_ALPHABET.length];
+    return `EB-${stamp}-${tail}`;
+  };
+
+  const orderItemsOf = (ids: number[]): Map<number, OrderItem[]> => {
+    const map = new Map<number, OrderItem[]>();
+    if (!ids.length) return map;
+    const rows = raw
+      .prepare(
+        `SELECT * FROM order_items WHERE order_id IN (${ids.map(() => "?").join(",")}) ORDER BY id`,
+      )
+      .all(...ids) as OrderItemRow[];
+    for (const row of rows) {
+      const list = map.get(Number(row.order_id)) ?? [];
+      list.push({
+        productId: Number(row.product_id),
+        name: row.name,
+        size: row.size ?? "",
+        unitPrice: Number(row.unit_price),
+        listUnitPrice: Number(row.list_unit_price),
+        discountPercent: Number(row.discount_percent),
+        quantity: Number(row.quantity),
+        lineTotal: Number(row.line_total),
+      });
+      map.set(Number(row.order_id), list);
+    }
+    return map;
+  };
+
+  const orderHistoryOf = (ids: number[]) => {
+    const map = new Map<number, Order["history"]>();
+    if (!ids.length) return map;
+    const rows = raw
+      .prepare(
+        `SELECT order_id, status, note, at FROM order_events
+          WHERE order_id IN (${ids.map(() => "?").join(",")}) ORDER BY id`,
+      )
+      .all(...ids) as OrderEventRow[];
+    for (const row of rows) {
+      const list = map.get(Number(row.order_id)) ?? [];
+      list.push({
+        status: row.status as OrderStatus,
+        at: row.at,
+        note: row.note ?? "",
+      });
+      map.set(Number(row.order_id), list);
+    }
+    return map;
+  };
+
+  const hydrateOrders = (rows: OrderRow[]): Order[] => {
+    const ids = rows.map((row) => Number(row.id));
+    const items = orderItemsOf(ids);
+    const history = orderHistoryOf(ids);
+    return rows.map((row) => ({
+      id: Number(row.id),
+      reference: row.reference,
+      status: row.status as OrderStatus,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      customer: {
+        name: row.customer_name,
+        phone: row.customer_phone,
+        altPhone: row.customer_alt_phone ?? "",
+        address: row.address,
+        area: row.area ?? "",
+        notes: row.notes ?? "",
+      },
+      deliveryZoneId: row.delivery_zone_id ?? "",
+      deliveryZoneName: row.delivery_zone_name ?? "",
+      paymentMethod: (row.payment_method ?? "on_confirmation") as PaymentMethod,
+      paymentStatus: (row.payment_status ?? "unpaid") as PaymentStatus,
+      currency: row.currency ?? "",
+      subtotal: Number(row.subtotal),
+      discountTotal: Number(row.discount_total),
+      shipping: row.shipping === null ? null : Number(row.shipping),
+      total: Number(row.total),
+      itemCount: Number(row.item_count),
+      items: items.get(Number(row.id)) ?? [],
+      history: history.get(Number(row.id)) ?? [],
+    }));
+  };
+
+  const orderRow = (id: number) =>
+    raw.prepare("SELECT * FROM orders WHERE id = ?").get(id) as
+      | OrderRow
+      | undefined;
+
+  const hydrateOne = (row: OrderRow | undefined): Order | null =>
+    row ? (hydrateOrders([row])[0] ?? null) : null;
+
+  const appendOrderEvent = (
+    orderId: number,
+    status: OrderStatus,
+    actor: { id: number | null; name: string },
+    note: string,
+    at: string,
+  ) => {
+    raw
+      .prepare(
+        `INSERT INTO order_events (order_id, status, note, actor_id, actor_name, at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(orderId, status, note, actor.id, actor.name, at);
+  };
+
+  /** Reads and validates the content document inside an open transaction. */
+  const contentInTx = () => {
+    const row = contentRow();
+    if (!row) throw new ContentUnreadable(["content row missing"]);
+    const parsed = contentSchema.safeParse(JSON.parse(row.json));
+    if (!parsed.success)
+      throw new ContentUnreadable(
+        parsed.error.issues
+          .slice(0, 10)
+          .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`),
+      );
+    return { content: parsed.data, revision: Number(row.revision) };
+  };
+
+  /**
+   * Writes a stock change back into the content document with the same
+   * compare-and-set guard the dashboard uses, so an order and an admin save
+   * can never silently overwrite each other.
+   */
+  const writeStock = (content: Content, expectedRevision: number) => {
+    const result = raw
+      .prepare(
+        "UPDATE content SET json = ?, revision = ?, updated_at = ? WHERE id = 1 AND revision = ?",
+      )
+      .run(
+        JSON.stringify(content),
+        expectedRevision + 1,
+        nowIso(),
+        expectedRevision,
+      );
+    if (Number(result.changes) === 0) throw new RevisionConflict(getContent());
+  };
+
+  const bootRow = contentRow();
 
   return {
     raw,
     dataDir,
+    file,
+    provenance: {
+      createdDatabase,
+      seededDefaults,
+      revisionAtBoot: Number(bootRow?.revision ?? 0),
+      updatedAtBoot: bootRow?.updated_at ?? "",
+    },
+    contentHealth,
     setupTokenPath,
     uploadsDir,
     getContent,
@@ -410,6 +863,365 @@ export function openDb(dataDir: string): Db {
       if (Number(result.changes) === 0)
         throw new RevisionConflict(getContent());
       return { ...clean, revision: next };
+    },
+    createOrder(input) {
+      // One fingerprint per submission: the same key with different contents
+      // is a client bug (or a tampered retry), not a duplicate.
+      const fingerprint = sha256(
+        JSON.stringify({
+          items: [...input.items]
+            .sort((a, b) => a.productId - b.productId)
+            .map((item) => [item.productId, Math.floor(item.quantity)]),
+          customer: input.customer,
+          zone: input.deliveryZoneId,
+          payment: input.paymentMethod,
+        }),
+      );
+      const byKey = () =>
+        input.requestKey
+          ? (raw
+              .prepare("SELECT * FROM orders WHERE request_key = ?")
+              .get(input.requestKey) as OrderRow | undefined)
+          : undefined;
+
+      const seen = byKey();
+      if (seen)
+        return {
+          order: hydrateOne(seen)!,
+          created: false,
+          conflict: seen.fingerprint !== fingerprint,
+          accessToken: null,
+        };
+
+      raw.exec("BEGIN IMMEDIATE");
+      try {
+        // Re-check under the write lock: two taps can arrive together.
+        const raced = byKey();
+        if (raced) {
+          raw.exec("COMMIT");
+          return {
+            order: hydrateOne(raced)!,
+            created: false,
+            conflict: raced.fingerprint !== fingerprint,
+            accessToken: null,
+          };
+        }
+
+        const { content, revision } = contentInTx();
+        const commerce = content.commerce;
+        if (!commerce.ordersEnabled) throw new OrderRejected("orders-disabled");
+
+        const priced = priceOrder(
+          input.items,
+          content.products,
+          commerce,
+          { deliveryZoneId: input.deliveryZoneId },
+        );
+        if (priced.problems.length)
+          throw new OrderRejected("items", "", priced.problems);
+        if (!priced.lines.length) throw new OrderRejected("empty");
+
+        const zone = commerce.deliveryZones.find(
+          (candidate) => candidate.id === input.deliveryZoneId,
+        );
+        if (commerce.deliveryZones.length > 0 && !zone)
+          throw new OrderRejected("zone-required");
+        if (priced.belowMinimum !== null)
+          throw new OrderRejected("below-minimum", String(commerce.minOrderTotal));
+        if (input.paymentMethod === "cod" && !commerce.codEnabled)
+          throw new OrderRejected("payment-unavailable");
+
+        // Reserve stock for every tracked product, then persist the catalogue
+        // under its revision guard. Untracked products (quantity = null) and
+        // made-to-order items are left alone.
+        const ordered = new Map(
+          priced.lines.map((line) => [line.productId, line.quantity]),
+        );
+        let stockChanged = false;
+        const products = content.products.map((product) => {
+          const take = ordered.get(product.id);
+          if (!take || product.quantity === null) return product;
+          stockChanged = true;
+          return { ...product, quantity: Math.max(0, product.quantity - take) };
+        });
+        if (stockChanged) writeStock({ ...content, products }, revision);
+
+        const accessToken = randomBytes(24).toString("base64url");
+        let reference = makeReference();
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const clash = raw
+            .prepare("SELECT 1 FROM orders WHERE reference = ?")
+            .get(reference);
+          if (!clash) break;
+          reference = makeReference();
+        }
+
+        const stamp = nowIso();
+        const info = raw
+          .prepare(
+            `INSERT INTO orders (
+               reference, access_hash, request_key, fingerprint, status,
+               customer_name, customer_phone, customer_alt_phone, address, area, notes,
+               delivery_zone_id, delivery_zone_name, payment_method, payment_status,
+               currency, subtotal, discount_total, shipping, total, item_count,
+               stock_held, ip, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid',
+                     ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+          )
+          .run(
+            reference,
+            sha256(accessToken),
+            input.requestKey ?? null,
+            fingerprint,
+            input.customer.name,
+            input.customer.phone,
+            input.customer.altPhone,
+            input.customer.address,
+            input.customer.area,
+            input.customer.notes,
+            zone?.id ?? "",
+            zone?.name ?? "",
+            input.paymentMethod,
+            priced.currency,
+            priced.subtotal,
+            priced.discountTotal,
+            priced.shipping,
+            priced.total,
+            priced.itemCount,
+            input.ip ?? "",
+            stamp,
+            stamp,
+          );
+        const orderId = Number(info.lastInsertRowid);
+        const insertItem = raw.prepare(
+          `INSERT INTO order_items
+             (order_id, product_id, name, size, unit_price, list_unit_price,
+              discount_percent, quantity, line_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        for (const line of priced.lines)
+          insertItem.run(
+            orderId,
+            line.productId,
+            line.name,
+            line.size,
+            line.unitPrice,
+            line.listUnitPrice,
+            line.discountPercent,
+            line.quantity,
+            line.lineTotal,
+          );
+        appendOrderEvent(
+          orderId,
+          "pending",
+          { id: null, name: "العميل" },
+          "تم استلام الطلب",
+          stamp,
+        );
+        raw.exec("COMMIT");
+        return {
+          order: hydrateOne(orderRow(orderId))!,
+          created: true,
+          conflict: false,
+          accessToken,
+        };
+      } catch (error) {
+        try {
+          raw.exec("ROLLBACK");
+        } catch {
+          /* already rolled back */
+        }
+        throw error;
+      }
+    },
+    getOrderByReference(reference, token) {
+      const row = raw
+        .prepare("SELECT * FROM orders WHERE reference = ?")
+        .get(String(reference).trim().toUpperCase()) as OrderRow | undefined;
+      if (!row || !token) return null;
+      const expected = Buffer.from(row.access_hash, "utf8");
+      const given = Buffer.from(sha256(String(token)), "utf8");
+      if (expected.length !== given.length) return null;
+      if (!timingSafeEqual(expected, given)) return null;
+      return hydrateOne(row);
+    },
+    getOrder(id) {
+      return hydrateOne(orderRow(id));
+    },
+    listOrders({ search = "", status = "", limit, offset }) {
+      const clauses: string[] = [];
+      const params: (string | number)[] = [];
+      if (status) {
+        clauses.push("status = ?");
+        params.push(status);
+      }
+      const term = search.trim();
+      if (term) {
+        clauses.push(
+          "(reference LIKE ? OR customer_name LIKE ? OR customer_phone LIKE ?)",
+        );
+        const like = `%${term.replace(/[%_]/g, (match) => `\\${match}`)}%`;
+        params.push(like, like, like);
+      }
+      const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+      const total = Number(
+        (
+          raw
+            .prepare(`SELECT COUNT(*) AS count FROM orders ${where}`)
+            .get(...params) as { count: number }
+        ).count,
+      );
+      const rows = raw
+        .prepare(
+          `SELECT * FROM orders ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
+        )
+        .all(...params, limit, offset) as OrderRow[];
+      return { items: hydrateOrders(rows), total };
+    },
+    setOrderStatus(id, status, actor, note = "") {
+      raw.exec("BEGIN IMMEDIATE");
+      try {
+        const row = orderRow(id);
+        if (!row) throw new OrderRejected("items", "order-not-found");
+        const from = row.status as OrderStatus;
+        if (from === status) {
+          raw.exec("COMMIT");
+          return hydrateOne(row)!;
+        }
+        if (!canTransition(from, status))
+          throw new InvalidStatusTransition(from, status);
+
+        let stockHeld = Number(row.stock_held);
+        // Cancelling returns whatever this order was holding — once.
+        if (status === "cancelled" && stockHeld === 1) {
+          const { content, revision } = contentInTx();
+          const items = raw
+            .prepare("SELECT * FROM order_items WHERE order_id = ?")
+            .all(id) as OrderItemRow[];
+          const back = new Map(
+            items.map((item) => [Number(item.product_id), Number(item.quantity)]),
+          );
+          let changed = false;
+          const products = content.products.map((product) => {
+            const give = back.get(product.id);
+            if (!give || product.quantity === null) return product;
+            changed = true;
+            return {
+              ...product,
+              quantity: Math.min(1_000_000, product.quantity + give),
+            };
+          });
+          if (changed) writeStock({ ...content, products }, revision);
+          stockHeld = 0;
+        }
+
+        const stamp = nowIso();
+        raw
+          .prepare(
+            "UPDATE orders SET status = ?, stock_held = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(status, stockHeld, stamp, id);
+        appendOrderEvent(id, status, actor, note, stamp);
+        raw.exec("COMMIT");
+        return hydrateOne(orderRow(id))!;
+      } catch (error) {
+        try {
+          raw.exec("ROLLBACK");
+        } catch {
+          /* already rolled back */
+        }
+        throw error;
+      }
+    },
+    setOrderPayment(id, paymentStatus, actor) {
+      const row = orderRow(id);
+      if (!row) throw new OrderRejected("items", "order-not-found");
+      const stamp = nowIso();
+      raw
+        .prepare("UPDATE orders SET payment_status = ?, updated_at = ? WHERE id = ?")
+        .run(paymentStatus, stamp, id);
+      appendOrderEvent(
+        id,
+        row.status as OrderStatus,
+        actor,
+        paymentStatus === "paid" ? "تم تحصيل المبلغ" : "تم وضع علامة غير مدفوع",
+        stamp,
+      );
+      return hydrateOne(orderRow(id))!;
+    },
+    orderStats() {
+      const rows = raw
+        .prepare(
+          `SELECT status, COUNT(*) AS count, SUM(total) AS sum FROM orders GROUP BY status`,
+        )
+        .all() as { status: string; count: number; sum: number | null }[];
+      const byStatus = {
+        pending: 0,
+        confirmed: 0,
+        preparing: 0,
+        out_for_delivery: 0,
+        delivered: 0,
+        cancelled: 0,
+      } as Record<OrderStatus, number>;
+      let total = 0;
+      let revenue = 0;
+      let revenueDelivered = 0;
+      for (const row of rows) {
+        const status = row.status as OrderStatus;
+        if (status in byStatus) byStatus[status] = Number(row.count);
+        total += Number(row.count);
+        if (status !== "cancelled") revenue += Number(row.sum ?? 0);
+        if (status === "delivered") revenueDelivered += Number(row.sum ?? 0);
+      }
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const last7Days = Number(
+        (
+          raw
+            .prepare("SELECT COUNT(*) AS count FROM orders WHERE created_at >= ?")
+            .get(since) as { count: number }
+        ).count,
+      );
+      const bestSellers = (
+        raw
+          .prepare(
+            `SELECT i.product_id AS productId, i.name AS name,
+                    SUM(i.quantity) AS quantity, SUM(i.line_total) AS revenue
+               FROM order_items i
+               JOIN orders o ON o.id = i.order_id
+              WHERE o.status <> 'cancelled'
+              GROUP BY i.product_id
+              ORDER BY quantity DESC
+              LIMIT 5`,
+          )
+          .all() as {
+          productId: number;
+          name: string;
+          quantity: number;
+          revenue: number;
+        }[]
+      ).map((row) => ({
+        productId: Number(row.productId),
+        name: row.name,
+        quantity: Number(row.quantity),
+        revenue: round2(Number(row.revenue)),
+      }));
+      const counted = total - byStatus.cancelled;
+      let currency = "";
+      try {
+        currency = getContent().commerce.currency;
+      } catch {
+        currency = "";
+      }
+      return {
+        total,
+        byStatus,
+        revenue: round2(revenue),
+        revenueDelivered: round2(revenueDelivered),
+        last7Days,
+        averageOrder: counted > 0 ? round2(revenue / counted) : 0,
+        bestSellers,
+        currency,
+      };
     },
     createRequest(input) {
       if (input.requestKey) {

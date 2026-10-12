@@ -1,0 +1,279 @@
+/* ===========================================================================
+   Base layer: document behaviour, typography, focus, utilities and the one
+   animation system the whole dashboard uses. Transform and opacity only —
+   never width/height/top/left — so nothing triggers layout while animating.
+   =========================================================================== */
+
+/* The public site pins the viewport for its scroll-snap sections; the
+   dashboard is a normal scrolling document. */
+html:has(.admin-shell),
+html:has(.auth-screen),
+html:has(.admin-boot),
+body:has(.admin-shell),
+body:has(.auth-screen),
+body:has(.admin-boot),
+#root:has(.admin-shell),
+#root:has(.auth-screen),
+#root:has(.admin-boot) {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
+/* Scroll lock while a modal or drawer owns the screen. */
+body.is-locked {
+  overflow: hidden;
+}
+
+.dash,
+.dash *,
+.dash *::before,
+.dash *::after {
+  box-sizing: border-box;
+}
+
+.dash {
+  font-family: "Cairo", system-ui, sans-serif;
+  font-size: var(--fs-base);
+  line-height: var(--lh-body);
+  color: var(--dash-text);
+  -webkit-text-size-adjust: 100%;
+}
+
+.dash h1,
+.dash h2,
+.dash h3,
+.dash h4 {
+  line-height: var(--lh-tight);
+  letter-spacing: 0;
+  color: var(--dash-text);
+}
+
+.dash p {
+  line-height: var(--lh-body);
+}
+
+/* Numbers, emails and URLs read left-to-right even inside Arabic text. */
+.dash [dir="ltr"],
+.dash .ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.dash :focus-visible,
+.dash:focus-visible {
+  outline: 2px solid var(--dash-primary-ink);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* A visible target for keyboard users, hidden until focused. */
+.skip-link {
+  position: absolute;
+  inset-inline-start: 12px;
+  top: -64px;
+  z-index: 60;
+  padding: 10px 16px;
+  border-radius: var(--r-sm);
+  background: var(--dash-primary);
+  color: var(--dash-on-primary);
+  font-weight: 700;
+  transition: top var(--dur-2) var(--ease);
+}
+.skip-link:focus {
+  top: 12px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Long unbroken values (emails, links, IDs) must wrap instead of overflowing. */
+.dash .wrap-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* ---------------------------------------------------------------- motion */
+
+@keyframes dash-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes dash-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dash-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dash-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dash-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dash-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dash-drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes dash-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dash-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dash-success-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes dash-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@keyframes dash-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.spin {
+  animation: dash-spin 0.9s linear infinite;
+}
+.fade-in {
+  animation: dash-fade-in var(--dur-3) var(--ease) both;
+}
+.dash .anim-page {
+  animation: dash-page-in var(--dur-3) var(--ease-out) both;
+}
+.dash .anim-card {
+  animation: dash-card-in var(--dur-3) var(--ease-out) both;
+  /* A short, capped stagger: groups feel alive, long lists never feel slow. */
+  animation-delay: calc(min(var(--i, 0), 6) * 28ms);
+}
+.dash .anim-fade {
+  animation: dash-fade-in var(--dur-3) var(--ease) both;
+}
+.dash .anim-success {
+  animation: dash-success-pop var(--dur-4) var(--ease-out) both;
+}
+
+/* One transition contract for interactive surfaces. */
+.dash .btn,
+.dash .icon-btn,
+.dash .nav-item,
+.dash .input,
+.dash .tab,
+.dash .segmented-item,
+.dash .option,
+.dash .icon-option,
+.dash .stat-pill--action,
+.dash .menu-item,
+.dash .product-tile,
+.dash .request-row,
+.dash .quick-action {
+  transition:
+    background-color var(--dur-2) var(--ease),
+    border-color var(--dur-2) var(--ease),
+    color var(--dur-2) var(--ease),
+    box-shadow var(--dur-2) var(--ease),
+    transform var(--dur-2) var(--ease),
+    opacity var(--dur-2) var(--ease);
+}
+
+/* Reduced motion: keep state changes, drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .dash *,
+  .dash *::before,
+  .dash *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+  .dash .spin {
+    animation: dash-spin 1.6s linear infinite !important;
+  }
+}

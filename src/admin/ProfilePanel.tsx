@@ -1,21 +1,31 @@
 // Own-account panel (Owner and Admin see the same self-service screen).
-// Close button at the top, log out at the bottom, nothing about other accounts.
+// Split into tabs so no single screen is an endless scroll: account details,
+// security (password + security question) and the current session.
+// Nothing here can reach another account.
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { adminApi, type AdminProfile } from "./api";
 import { sessionAge, shortDateTime } from "./dates";
 import { Icons } from "./icons";
 import {
   Badge,
   Button,
+  Drawer,
   Field,
+  FormSection,
   ImagePreview,
-  Skeleton,
+  MetaRow,
+  Notice,
+  PasswordInput,
+  SkeletonRows,
+  Tabs,
+  TabPanel,
   TextInput,
   describeError,
   fieldErrorsOf,
   useToast,
 } from "./ui";
+
+type TabKey = "account" | "security" | "session";
 
 /**
  * @param onClose         closes the panel (X at the top)
@@ -32,6 +42,7 @@ export default function ProfilePanel({
   onProfileChange: (profile: AdminProfile) => void;
 }) {
   const [profile, setProfile] = useState<AdminProfile | null>(null);
+  const [tab, setTab] = useState<TabKey>("account");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
@@ -69,23 +80,11 @@ export default function ProfilePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The session age is a live value: refresh it every half minute.
   useEffect(() => {
     const id = window.setInterval(() => setTick(Date.now()), 30_000);
     return () => window.clearInterval(id);
   }, []);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previous;
-    };
-  }, [onClose]);
 
   const uploadAvatar = async (file: File) => {
     setSavingInfo(true);
@@ -135,7 +134,10 @@ export default function ProfilePanel({
       await adminApi.changePassword({ currentPassword, newPassword });
       setCurrentPassword("");
       setNewPassword("");
-      toast.push("success", "تم تغيير كلمة المرور. الجلسات الأخرى على أجهزة أخرى أُغُلقت.");
+      toast.push(
+        "success",
+        "تم تغيير كلمة المرور. الجلسات الأخرى على أجهزة أخرى أُغُلقت.",
+      );
     } catch (failure) {
       setErrors(fieldErrorsOf(failure));
       toast.push("error", describeError(failure));
@@ -166,116 +168,196 @@ export default function ProfilePanel({
     }
   };
 
-  return createPortal(
-    <div className="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <aside className="drawer" role="dialog" aria-modal="true" aria-label="الملف الشخصي">
-        <header className="drawer-head">
-          <div className="drawer-title">
-            <Icons.user size={20} />
-            <div>
-              <h2>الملف الشخصي</h2>
-              <p>{profile ? `${profile.role === "owner" ? "المالك" : "مشرف"} · ${profile.username}` : "…"}</p>
+  const roleLabel = profile?.role === "owner" ? "المالك" : "مشرف";
+
+  return (
+    <Drawer
+      open
+      width="lg"
+      title="الملف الشخصي"
+      description={profile ? `${roleLabel} · ${profile.username}` : "…"}
+      closeLabel="إغلاق الملف الشخصي"
+      onClose={onClose}
+      footer={
+        <Button
+          variant="danger"
+          block
+          icon={<Icons.logout size={17} />}
+          onClick={onLogout}
+        >
+          تسجيل الخروج
+        </Button>
+      }
+    >
+      {!profile ? (
+        <SkeletonRows rows={4} height={58} />
+      ) : (
+        <>
+          <div className="profile-identity">
+            {avatarUrl ? (
+              <ImagePreview url={avatarUrl} alt={profile.displayName} />
+            ) : (
+              <span className="avatar-fallback" aria-hidden="true">
+                {profile.displayName.trim().charAt(0) || "؟"}
+              </span>
+            )}
+            <div className="profile-identity-text">
+              <strong>{profile.displayName}</strong>
+              <span dir="ltr">{profile.email || "—"}</span>
+              <Badge
+                tone={profile.role === "owner" ? "green" : "blue"}
+                icon={
+                  profile.role === "owner" ? (
+                    <Icons.shield size={13} />
+                  ) : (
+                    <Icons.userCog size={13} />
+                  )
+                }
+              >
+                {roleLabel}
+              </Badge>
+            </div>
+            <div className="profile-avatar-actions">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                className="visually-hidden"
+                id="avatar-upload"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void uploadAvatar(file);
+                }}
+              />
+              <Button
+                variant="soft"
+                size="sm"
+                icon={<Icons.upload size={15} />}
+                loading={savingInfo}
+                onClick={() => fileRef.current?.click()}
+              >
+                تغيير الصورة
+              </Button>
+              {avatarUrl && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Icons.trash size={15} />}
+                  onClick={() => setAvatarUrl("")}
+                >
+                  إزالة
+                </Button>
+              )}
             </div>
           </div>
-          <button className="icon-btn icon-btn--ghost" onClick={onClose} aria-label="إغلاق الملف الشخصي">
-            <Icons.close size={20} />
-          </button>
-        </header>
 
-        <div className="drawer-body">
-          {!profile ? (
-            <div className="skeleton-lines">
-              <Skeleton height={92} radius={16} />
-              <Skeleton height={46} radius={12} />
-              <Skeleton height={46} radius={12} />
-              <Skeleton height={46} radius={12} />
-            </div>
-          ) : (
-            <>
-              <div className="profile-identity">
-                {avatarUrl ? (
-                  <ImagePreview url={avatarUrl} alt={profile.displayName} />
-                ) : (
-                  <span className="avatar-fallback" aria-hidden="true">
-                    {profile.displayName.trim().charAt(0) || "؟"}
-                  </span>
-                )}
-                <div className="profile-identity-text">
-                  <strong>{profile.displayName}</strong>
-                  <span dir="ltr">{profile.email || "—"}</span>
-                  <Badge tone={profile.role === "owner" ? "green" : "blue"}>
-                    {profile.role === "owner" ? "المالك" : "مشرف"}
-                  </Badge>
-                </div>
-                <div className="profile-avatar-actions">
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/png,image/jpeg,image/gif,image/webp"
-                    className="visually-hidden"
-                    id="avatar-upload"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (file) void uploadAvatar(file);
-                    }}
-                  />
-                  <Button
-                    variant="soft"
-                    size="sm"
-                    icon={<Icons.upload size={15} />}
-                    loading={savingInfo}
-                    onClick={() => fileRef.current?.click()}
-                  >
-                    تغيير الصورة
-                  </Button>
-                  {avatarUrl && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      icon={<Icons.trash size={15} />}
-                      onClick={() => setAvatarUrl("")}
-                    >
-                      إزالة
-                    </Button>
-                  )}
-                </div>
-              </div>
+          <Tabs
+            label="أقسام الملف الشخصي"
+            value={tab}
+            onChange={(key) => setTab(key as TabKey)}
+            items={[
+              {
+                key: "account",
+                label: "معلومات الحساب",
+                icon: <Icons.userCog size={16} />,
+              },
+              {
+                key: "security",
+                label: "الأمان",
+                icon: <Icons.shield size={16} />,
+              },
+              {
+                key: "session",
+                label: "الجلسة الحالية",
+                icon: <Icons.clock size={16} />,
+              },
+            ]}
+          />
 
-              <section className="drawer-section">
-                <h3>
-                  <Icons.userCog size={17} />
-                  بيانات الحساب
-                </h3>
-                <Field label="الاسم الظاهر" error={errors.displayName}>
-                  <TextInput value={displayName} onChange={setDisplayName} maxLength={80} />
-                </Field>
-                <Field label="البريد الإلكتروني" hint="يُستخدم لتسجيل الدخول." error={errors.email}>
-                  <TextInput value={email} onChange={setEmail} type="email" dir="ltr" />
-                </Field>
-                <Field label="رابط الصورة الشخصية" error={errors.avatarUrl}>
-                  <TextInput value={avatarUrl} onChange={setAvatarUrl} dir="ltr" placeholder="/uploads/…" />
-                </Field>
-                <Button icon={<Icons.save size={16} />} loading={savingInfo} onClick={() => void saveInfo()}>
+          <TabPanel tabKey="account" active={tab === "account"}>
+            <FormSection
+              icon={<Icons.userCog size={17} />}
+              title="معلومات الحساب"
+              description="الاسم والبريد اللذان يظهران لك داخل اللوحة."
+            >
+              <Field label="الاسم الظاهر" error={errors.displayName}>
+                <TextInput
+                  value={displayName}
+                  onChange={setDisplayName}
+                  maxLength={80}
+                  invalid={Boolean(errors.displayName)}
+                />
+              </Field>
+              <Field
+                label="البريد الإلكتروني"
+                hint="يُستخدم لتسجيل الدخول."
+                error={errors.email}
+              >
+                <TextInput
+                  value={email}
+                  onChange={setEmail}
+                  type="email"
+                  dir="ltr"
+                  invalid={Boolean(errors.email)}
+                />
+              </Field>
+              <Field
+                label="رابط الصورة الشخصية"
+                hint="يُملأ تلقائيًا عند رفع صورة. اتركه فارغًا لعرض الحرف الأول."
+                error={errors.avatarUrl}
+              >
+                <TextInput
+                  value={avatarUrl}
+                  onChange={setAvatarUrl}
+                  dir="ltr"
+                  placeholder="/uploads/…"
+                  invalid={Boolean(errors.avatarUrl)}
+                />
+              </Field>
+              <div className="form-actions">
+                <Button
+                  icon={<Icons.save size={16} />}
+                  loading={savingInfo}
+                  onClick={() => void saveInfo()}
+                >
                   حفظ البيانات
                 </Button>
-              </section>
+              </div>
+            </FormSection>
+          </TabPanel>
 
-              <section className="drawer-section">
-                <h3>
-                  <Icons.key size={17} />
-                  كلمة المرور
-                </h3>
-                <Field label="كلمة المرور الحالية" required error={errors.currentPassword}>
-                  <TextInput value={currentPassword} onChange={setCurrentPassword} type="password" dir="ltr" autoComplete="current-password" />
-                </Field>
-                <Field
-                  label="كلمة المرور الجديدة"
-                  required
-                  hint="١٢ حرفًا على الأقل مع حروف وأرقام."
-                  error={errors.newPassword}
-                >
-                  <TextInput value={newPassword} onChange={setNewPassword} type="password" dir="ltr" autoComplete="new-password" />
-                </Field>
+          <TabPanel tabKey="security" active={tab === "security"}>
+            <FormSection
+              icon={<Icons.key size={17} />}
+              title="كلمة المرور"
+              description="تغيير كلمة المرور يُغلق جلساتك على الأجهزة الأخرى فورًا."
+            >
+              <Field
+                label="كلمة المرور الحالية"
+                required
+                error={errors.currentPassword}
+              >
+                <PasswordInput
+                  value={currentPassword}
+                  onChange={setCurrentPassword}
+                  autoComplete="current-password"
+                  invalid={Boolean(errors.currentPassword)}
+                />
+              </Field>
+              <Field
+                label="كلمة المرور الجديدة"
+                required
+                hint="١٢ حرفًا على الأقل مع حروف وأرقام."
+                error={errors.newPassword}
+              >
+                <PasswordInput
+                  value={newPassword}
+                  onChange={setNewPassword}
+                  autoComplete="new-password"
+                  invalid={Boolean(errors.newPassword)}
+                />
+              </Field>
+              <div className="form-actions">
                 <Button
                   variant="soft"
                   icon={<Icons.lock size={16} />}
@@ -285,32 +367,50 @@ export default function ProfilePanel({
                 >
                   تغيير كلمة المرور
                 </Button>
-              </section>
+              </div>
+            </FormSection>
 
-              <section className="drawer-section">
-                <h3>
-                  <Icons.shield size={17} />
-                  سؤال الأمان
-                </h3>
-                <p className="drawer-note">
-                  يُطلب بعد كلمة المرور عند الدخول. تغيير سؤال موجود يتطلّب تأكيد الإجابة الحالية.
-                </p>
-                {profile.hasSecurityQuestion && (
-                  <Field label="الإجابة الحالية" required error={errors.currentAnswer}>
-                    <TextInput value={currentAnswer} onChange={setCurrentAnswer} autoComplete="off" />
-                  </Field>
-                )}
-                <Field label="السؤال" required error={errors.securityQuestion}>
-                  <TextInput value={question} onChange={setQuestion} maxLength={160} />
-                </Field>
+            <FormSection
+              icon={<Icons.shield size={17} />}
+              title="سؤال الأمان"
+              description="يُطلب بعد كلمة المرور عند الدخول. تغيير سؤال موجود يتطلّب تأكيد الإجابة الحالية."
+            >
+              {profile.hasSecurityQuestion && (
                 <Field
-                  label="الإجابة الجديدة"
+                  label="الإجابة الحالية"
                   required
-                  hint="تُخزَّن مشفّرة ولا تظهر في أي شاشة."
-                  error={errors.securityAnswer}
+                  error={errors.currentAnswer}
                 >
-                  <TextInput value={answer} onChange={setAnswer} autoComplete="off" />
+                  <TextInput
+                    value={currentAnswer}
+                    onChange={setCurrentAnswer}
+                    autoComplete="off"
+                    invalid={Boolean(errors.currentAnswer)}
+                  />
                 </Field>
+              )}
+              <Field label="السؤال" required error={errors.securityQuestion}>
+                <TextInput
+                  value={question}
+                  onChange={setQuestion}
+                  maxLength={160}
+                  invalid={Boolean(errors.securityQuestion)}
+                />
+              </Field>
+              <Field
+                label="الإجابة الجديدة"
+                required
+                hint="تُخزَّن مشفّرة ولا تظهر في أي شاشة."
+                error={errors.securityAnswer}
+              >
+                <TextInput
+                  value={answer}
+                  onChange={setAnswer}
+                  autoComplete="off"
+                  invalid={Boolean(errors.securityAnswer)}
+                />
+              </Field>
+              <div className="form-actions">
                 <Button
                   variant="soft"
                   icon={<Icons.shield size={16} />}
@@ -320,69 +420,79 @@ export default function ProfilePanel({
                 >
                   حفظ سؤال الأمان
                 </Button>
-              </section>
+              </div>
+            </FormSection>
+          </TabPanel>
 
-              <section className="drawer-section">
-                <h3>
-                  <Icons.clock size={17} />
-                  معلومات الجلسة
-                </h3>
-                <dl className="session-grid">
-                  <div>
-                    <dt>مدة الجلسة الحالية</dt>
-                    <dd>{sessionAge(profile.session.createdAt, new Date(tick))}</dd>
-                  </div>
-                  <div>
-                    <dt>بدأت في</dt>
-                    <dd>{shortDateTime(profile.session.createdAt)}</dd>
-                  </div>
-                  <div>
-                    <dt>تنتهي في</dt>
-                    <dd>{shortDateTime(profile.session.expiresAt)}</dd>
-                  </div>
-                  <div>
-                    <dt>آخر دخول</dt>
-                    <dd>{shortDateTime(profile.lastLoginAt)}</dd>
-                  </div>
-                  <div>
-                    <dt>عنوان IP</dt>
-                    <dd dir="ltr">{profile.session.ip || "—"}</dd>
-                  </div>
-                  <div>
-                    <dt>المتصفح</dt>
-                    <dd className="session-ua" dir="ltr">
-                      {profile.session.userAgent || "—"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>التحقق الإضافي</dt>
-                    <dd>
-                      {profile.session.securityVerified ? (
-                        <Badge tone="green" icon={<Icons.check size={13} />}>
-                          تم
-                        </Badge>
-                      ) : (
-                        <Badge tone="amber">بانتظار الإجابة</Badge>
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>تاريخ الإنشاء</dt>
-                    <dd>{shortDateTime(profile.createdAt)}</dd>
-                  </div>
-                </dl>
-              </section>
-            </>
-          )}
-        </div>
+          <TabPanel tabKey="session" active={tab === "session"}>
+            <FormSection
+              icon={<Icons.clock size={17} />}
+              title="الجلسة الحالية"
+              description="بيانات الجهاز الذي تستخدمه الآن."
+            >
+              <dl className="session-grid">
+                <div>
+                  <dt>مدة الجلسة الحالية</dt>
+                  <dd>{sessionAge(profile.session.createdAt, new Date(tick))}</dd>
+                </div>
+                <div>
+                  <dt>بدأت في</dt>
+                  <dd>{shortDateTime(profile.session.createdAt)}</dd>
+                </div>
+                <div>
+                  <dt>تنتهي في</dt>
+                  <dd>{shortDateTime(profile.session.expiresAt)}</dd>
+                </div>
+                <div>
+                  <dt>آخر دخول</dt>
+                  <dd>{shortDateTime(profile.lastLoginAt)}</dd>
+                </div>
+                <div>
+                  <dt>عنوان IP</dt>
+                  <dd dir="ltr">{profile.session.ip || "—"}</dd>
+                </div>
+                <div>
+                  <dt>المتصفح</dt>
+                  <dd className="session-ua" dir="ltr">
+                    {profile.session.userAgent || "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>التحقق الإضافي</dt>
+                  <dd>
+                    {profile.session.securityVerified ? (
+                      <Badge tone="green" icon={<Icons.check size={13} />}>
+                        تم
+                      </Badge>
+                    ) : (
+                      <Badge tone="amber">بانتظار الإجابة</Badge>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>تاريخ الإنشاء</dt>
+                  <dd>{shortDateTime(profile.createdAt)}</dd>
+                </div>
+              </dl>
+            </FormSection>
 
-        <footer className="drawer-foot">
-          <Button variant="danger" block icon={<Icons.logout size={17} />} onClick={onLogout}>
-            تسجيل الخروج
-          </Button>
-        </footer>
-      </aside>
-    </div>,
-    document.body,
+            <FormSection
+              icon={<Icons.settings size={17} />}
+              title="إجراءات الحساب"
+              description="إجراءات تخص حسابك أنت فقط."
+            >
+              <MetaRow label="الصلاحية">{roleLabel}</MetaRow>
+              <MetaRow label="اسم المستخدم">
+                <span dir="ltr">{profile.username}</span>
+              </MetaRow>
+              <Notice tone="info" icon={<Icons.info size={16} />}>
+                زر «تسجيل الخروج» في أسفل اللوحة ينهي هذه الجلسة على هذا الجهاز
+                فقط. لتغيير كلمة المرور أو سؤال الأمان استخدم تبويب «الأمان».
+              </Notice>
+            </FormSection>
+          </TabPanel>
+        </>
+      )}
+    </Drawer>
   );
 }

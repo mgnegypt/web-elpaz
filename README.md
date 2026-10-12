@@ -133,8 +133,33 @@ supports add, reorder (up/down) and remove.
 * The public site loads content on boot and refreshes when the visitor returns to a visible
   tab. The admin dashboard deliberately does **not** auto-refresh, so an editor's draft is
   never replaced under them.
-* If the API is unreachable, the public site keeps rendering the bundled defaults rather than
-  showing an empty page — but it never claims a *request* was saved when it was not.
+* **Published content always wins.** The last document the browser loaded successfully is
+  kept in `localStorage` (`src/content/contentCache.ts`) and rendered again on the next
+  visit, so a repeat visitor never sees the bundled demo content flash. The bundled
+  defaults are only ever shown to a browser that has never loaded the site before *and*
+  cannot reach the API — and in that case the site says so.
+* **A failed refresh never downgrades the page.** An error, a timeout
+  (`REQUEST_TIMEOUT_MS`, 12 s), a 429, a truncated body, an empty document or an older
+  `revision` are all rejected: the current content stays on screen, a small notice appears
+  with a *إعادة المحاولة* button, and a bounded backoff (`RETRY_DELAYS_MS` — 2 s, 4 s, 8 s,
+  16 s, then 30 s, stopping on the first success) retries in the background. Refreshes are
+  single-flight, so the boot request, a tab focus and a retry share one call.
+* If storage is unreadable the API answers `503 content-unavailable` (never the bundled
+  defaults), so a damaged database can be repaired without visitors seeing demo data.
+
+### Authenticity of photos and reviews
+
+Products carry `imageAuthenticity` and reviews carry `authenticity`, each one of
+`unspecified` / `genuine` / `illustrative` (`shared/content.ts`). The admin sets them in
+plain Arabic from **المنتجات** (صورة المنتج → *هل الصورة حقيقية؟*) and from **المحتوى →
+الآراء والأسئلة** (*نوع الرأي*).
+
+* `genuine` → no disclaimer. `illustrative` → the disclaimer is shown.
+* `unspecified` (every document written before this field existed) falls back to the old
+  global switches — `contentStatus.placeholderProductIds` and
+  `contentStatus.testimonialsArePlaceholders` — so existing content keeps rendering exactly
+  as it did. Nothing is bulk-marked genuine, and a rating never affects authenticity: a
+  genuine 1.5/5 complaint stays genuine.
 
 ---
 
@@ -154,6 +179,69 @@ honeypot, malformed payload, oversized body.
   pretends an order was saved.
 * **WhatsApp stays separate** — it is an explicit button next to the form. Opening it neither
   sends a message automatically nor claims the order was confirmed. No payment processing.
+
+---
+
+## 7b. Online store (cart, checkout, orders)
+
+The shop is **off until the owner gives a product a price**: `price` is `null` by default,
+and a product without a published price is shown as «السعر عند الطلب» and can only be
+ordered through WhatsApp/phone, exactly as before. Nothing in the catalogue is priced
+automatically.
+
+**What the owner controls** (dashboard → *محتوى الموقع → المتجر والتوصيل*, published with the
+rest of the content document):
+
+| Setting | Meaning | Default |
+| --- | --- | --- |
+| `ordersEnabled` | Master switch for the cart/checkout | `true` |
+| `currency` | Text shown next to every amount | `ج.م` |
+| `codEnabled` | Cash on delivery is offered | `false` |
+| `deliveryZones[]` | Areas actually served, with the real fee each | empty |
+| `freeDeliveryOver` | Subtotal that makes delivery free | `null` |
+| `minOrderTotal` | Smallest accepted subtotal (0 = none) | `0` |
+| `checkoutNote` | Owner's note on the checkout page | empty |
+| `whatsappSummary` | Offer a prefilled WhatsApp summary after an order | `true` |
+
+While `deliveryZones` is empty the storefront says **«رسوم التوصيل تُحدَّد عند تأكيد الطلب»**
+and the order stores `shipping = null`. No fee is ever invented.
+
+**Pricing is server-side.** `priceOrder()` in `shared/orders.ts` is the single implementation
+used by the browser (to show a cart) and by Express (to store an order). The browser sends
+only product ids and quantities; prices, discounts, delivery and totals are always recomputed
+from the stored catalogue. A client-sent `total` is ignored.
+
+**Order creation** — `POST /api/orders` runs one SQLite transaction (`BEGIN IMMEDIATE`) that
+re-reads the catalogue, validates every line, reserves stock by writing the decremented
+quantities back into the content document under its `revision` compare-and-set guard, then
+inserts `orders` / `order_items` / `order_events`. Anything that fails rolls the whole thing
+back, so a confirmation page is only ever shown for an order that genuinely exists.
+
+* **Idempotency** — each checkout carries a `requestKey`; a repeat returns the same order,
+  and the same key with different contents is a `409`.
+* **Stock** — only products with a tracked `quantity` are decremented; cancelling an order
+  returns exactly what it was holding, once (`stock_held`).
+* **Statuses** — `pending → confirmed → preparing → out_for_delivery → delivered`, plus
+  `cancelled` from any live state. The allowed moves live in `ORDER_STATUS_TRANSITIONS`
+  (`shared/orders.ts`) and are enforced by the server, not by the UI.
+* **Receipt privacy** — the reference (`EB-YYMMDD-XXXXX`) is not enough to open an order. A
+  random access token is issued once at creation, only its SHA-256 hash is stored, and
+  `GET /api/orders/:reference?token=…` compares in constant time. `/order` and `/checkout`
+  send `X-Robots-Tag: noindex` and are disallowed in `robots.txt`.
+* **Receipts are order receipts**, printable from the browser (`window.print()`), and are
+  explicitly **not** Egyptian tax invoices.
+* **WhatsApp** — an optional button that opens a chat with a prefilled summary (reference,
+  items, totals; never the address). The order is already stored; opening WhatsApp neither
+  sends nor confirms anything, and order creation never depends on it.
+* **No payment gateway.** Checkout records either «الدفع عند الاستلام» (when the owner
+  enabled it) or «يُتفق عليه عند تأكيد الطلب». No card data is collected anywhere. Adding a
+  provider later means implementing it behind `paymentMethod` with real credentials.
+
+**Dashboard** — *الطلبات* lists every order with search, status filter, a detail drawer
+(items, delivery data, status history), the valid next steps only, payment marking, and
+analytics computed from stored orders: total, pending, revenue (**sum of all non-cancelled
+order totals, delivery included**), last 7 days, best sellers, and low stock from the
+catalogue.
 
 ---
 
@@ -253,7 +341,9 @@ runner starts both for you.
 
 ```bash
 npm run build        # type-check + production build
-npm run test:api     # backend + security (no browser needed)
+npm run test:api     # backend + orders (no browser needed)
+npm run test:orders  # order pipeline only: pricing, stock, idempotency, workflow
+npm run test:shop    # browser: add to cart → checkout → real order → receipt
 npm test             # browser / layout / theme / transition
 npm run test:admin   # admin dashboard integration
 npm run test:all     # everything
@@ -266,6 +356,13 @@ Coverage highlights:
   rejection, cross-origin rejection, first-run setup (wrong token, short password, token
   deletion, no repeat, hashed password), session protection, CSRF, revoked sessions, URL-scheme
   rejection, seed-once semantics, revision conflicts, headers.
+* **Content availability** — the public read is revalidated (`no-cache, must-revalidate`)
+  and never served stale, a restart on an existing database re-seeds nothing, unreadable
+  storage answers `503` instead of demo content, documents written before the authenticity
+  fields existed still load, and the public read keeps its own rate-limit budget.
+* **Authenticity** — explicit flags win over the legacy lists, a recycled product id cannot
+  inherit a deleted product's "illustrative" label, genuine photos and genuine reviews
+  (including a 1.5/5 one) carry no disclaimer, and legacy documents keep their old labels.
 * **Browser** — five viewports (360×640, 390×844, 768×1024, 1440×900, 844×390 landscape), no
   horizontal overflow, bottom utility dock, 44px touch targets, carousel, filtering, gallery,
   FAQ, dialogs, focus trap, section navigation, the wholesale form, light/dark theming
@@ -273,6 +370,17 @@ Coverage highlights:
   preservation), the milk wave in both directions, and dev-server privacy.
 * **Admin** — first-run setup, login/logout, protected endpoints, request search, status change,
   deletion, product create/edit/delete, content publishing, revision conflicts.
+* **Orders** (`tests/orders.test.mjs`, 15 cases) — catalogue pricing wins over anything the
+  client sends, stock is reserved and restored, unpriced products cannot be bought, repeated
+  request keys never duplicate an order, Egyptian phone formats, delivery zones and the
+  free-delivery threshold, minimum order, the master switch, COD only when enabled, token-only
+  order retrieval (no internal fields, no staff notes), admin authorisation, the transition
+  table, revenue excluding cancelled orders, and a document saved before `commerce` existed
+  still loading.
+* **Shop** (`tests/shop.test.mjs`) — in a real browser: prices and add-to-cart appear only for
+  priced, in-stock products; the basket survives a reload; checkout creates an order that the
+  dashboard really lists; the receipt matches the stored totals; an order link without its
+  token shows nothing.
 
 ---
 
@@ -324,8 +432,10 @@ These are **not** verified production content. Replace them before launch:
 * Products **5–9** reuse other products' photos. Local `.webp` packaging shots in
   `public/images/` are AI-generated illustrations, not official photography. Some product
   images are hosted on Catbox (`files.catbox.moe`).
-* Statistics, reviews and gallery images are placeholders. The dashboard's content-status flags
-  keep the on-screen "illustrative" notices visible until they are switched off.
+* Statistics, reviews and gallery images are placeholders. The on-screen "illustrative"
+  notices stay visible until each product photo and each review is classified in the
+  dashboard (or the old global switches are turned off). Items the owner has not classified
+  yet are listed in **المحتوى → حالة المحتوى**, so nothing is silently presented as genuine.
 * All FAQs, policies, quality claims, delivery and payment terms need owner confirmation.
 
 ---

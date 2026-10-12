@@ -1,5 +1,6 @@
-import { Menu, X, ArrowUpLeft } from "lucide-react";
+import { Menu, X, ArrowUpLeft, ShoppingBag } from "lucide-react";
 import { useContent } from "../content/ContentContext";
+import { useCart } from "../cart/CartContext";
 import { BrandLogo } from "./shared";
 export default function Header({
   section,
@@ -15,6 +16,7 @@ export default function Header({
   blocked?: boolean;
 }) {
   const { site, sectionNames, copy } = useContent();
+  const cart = useCart();
   return (
     <>
       <header className="site-header">
@@ -47,6 +49,24 @@ export default function Header({
             <ArrowUpLeft size={15} />
           </button>
         </nav>
+        {cart.canShop && (
+          <button
+            className="cart-toggle icon-button"
+            onClick={cart.open}
+            aria-label={
+              cart.count > 0
+                ? `سلة المشتريات، ${cart.count} قطعة`
+                : "سلة المشتريات، فارغة"
+            }
+          >
+            <ShoppingBag />
+            {cart.count > 0 && (
+              <span className="cart-badge" aria-hidden="true">
+                {cart.count}
+              </span>
+            )}
+          </button>
+        )}
         <button
           className="menu-toggle icon-button"
           onClick={() => setMenu(!menu)}
