@@ -346,6 +346,7 @@ npm run test:orders  # order pipeline only: pricing, stock, idempotency, workflo
 npm run test:shop    # browser: add to cart → checkout → real order → receipt
 npm test             # browser / layout / theme / transition
 npm run test:admin   # admin dashboard integration
+npm run test:seo     # canonical / Open Graph / robots / sitemap on the served HTML
 npm run test:all     # everything
 npm run test:capture # optional: screenshots into .playwright/ (needs a running dev server)
 ```
@@ -412,10 +413,32 @@ tests/                   # api, site, admin, browser launcher, capture
 
 ## 14. SEO / metadata
 
-`index.html` carries the title, description, canonical, Open Graph tags, JSON-LD `Organization`
-data, favicon and Apple touch icon. `public/robots.txt` and `public/sitemap.xml` are in place.
-The SEO title and description are also editable from the dashboard and are applied to the live
-document.
+`index.html` carries the title, description, canonical, Open Graph and Twitter Card tags,
+JSON-LD `Organization` data, favicon and Apple touch icon. `public/robots.txt` and
+`public/sitemap.xml` are in place. The SEO title and description are also editable from the
+dashboard and are applied to the live document.
+
+Everything absolute points at `https://mgneg.online/`: the canonical, `og:url`,
+`og:image`/`twitter:image`, the JSON-LD `url`/`logo`, the sitemap `loc` and the sitemap
+reference in `robots.txt`. `npm run test:seo` asserts all of that against the served files
+and fails if a placeholder domain ever comes back.
+
+`og:image` is a real 1200×630 card published from this domain (`public/og-image.jpg`), not a
+third-party upload. It is generated from the site's own brand fonts and the existing
+packshot, so it can be rebuilt at any time:
+
+```bash
+npm run og:image   # -> public/og-image.jpg (1200x630)
+```
+
+Replace the file (and this generator) with the official company banner when one exists.
+
+> **Note — crawlers without JavaScript.** The public page is a client-rendered React app, so
+> the served HTML contains only the metadata above; the visible content appears after the
+> bundle runs. Google, Bing and the social unfurlers all execute JavaScript and read the
+> rendered page (verified in a headless browser), and every crawler still gets the title,
+> description, canonical, Open Graph tags, `robots.txt` and the sitemap without running
+> anything. SSR/prerendering is therefore optional, not required.
 
 ---
 
@@ -423,10 +446,9 @@ document.
 
 These are **not** verified production content. Replace them before launch:
 
-* `YOUR-DOMAIN` in `index.html` (canonical + `og:url`), `src/data.ts` (`SITE.domain`),
-  `public/robots.txt`, `public/sitemap.xml`.
-* Official logo (`LOGO_URL` is empty, so the built-in text mark is used) and a real 1200×630
-  Open Graph image (currently a Catbox URL).
+* Official logo (`LOGO_URL` is empty, so the built-in text mark is used) and the official
+  1200×630 Open Graph banner (a generated placeholder card is served from
+  `public/og-image.jpg` until then — see section 14).
 * Company address and map link (`ADDRESS_TEXT` / `MAPS_URL` are empty and stay hidden).
 * The second phone number still repeats the first.
 * Products **5–9** reuse other products' photos. Local `.webp` packaging shots in

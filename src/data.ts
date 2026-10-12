@@ -6,11 +6,11 @@ export const SITE = {
   email: "info@elpaze.online",
   phone: "+201141322878",
   secondPhone: "+201141322878",
-  domain: "https://YOUR-DOMAIN/",
+  domain: "https://mgneg.online/",
   facebook: "https://www.facebook.com/elpaz",
   instagram: "https://www.instagram.com/elpaz",
   credit: "https://www.facebook.com/mgndigital",
-}; // TODO: domain and second phone.
+}; // TODO: second phone.
 // Original PNGs are preserved. Local fallbacks are AI-generated illustrative packaging, NOT official product photography.
 // TODO: replace fallback files with official packshots; set webp to a WebP version of the SAME original photograph.
 export const IMAGES = [

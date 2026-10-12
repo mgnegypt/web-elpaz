@@ -8,6 +8,7 @@
     "dev:api": "node server/index.ts",
     "dev:web": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
+    "og:image": "node scripts/make-og-image.mjs",
     "start": "node server/index.ts",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node scripts/test.mjs site",
@@ -16,6 +17,7 @@
     "test:admin": "node scripts/test.mjs admin",
     "test:all": "node scripts/test.mjs all",
     "test:capture": "node tests/capture.mjs",
+    "test:seo": "node scripts/test.mjs seo",
     "test:security": "node scripts/test.mjs security",
     "test:layout": "node scripts/test.mjs layout",
     "test:shop": "node scripts/test.mjs shop"

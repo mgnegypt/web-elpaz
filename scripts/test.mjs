@@ -14,6 +14,7 @@ const SUITES = {
   api: ["tests/api.test.mjs", "tests/orders.test.mjs"],
   orders: ["tests/orders.test.mjs"],
   security: ["tests/security.test.mjs"],
+  seo: ["tests/seo.test.mjs"],
   site: ["tests/site.test.mjs"],
   admin: ["tests/admin.test.mjs"],
   layout: ["tests/layout.test.mjs"],
@@ -22,6 +23,7 @@ const SUITES = {
     "tests/api.test.mjs",
     "tests/orders.test.mjs",
     "tests/security.test.mjs",
+    "tests/seo.test.mjs",
     "tests/site.test.mjs",
     "tests/admin.test.mjs",
     "tests/layout.test.mjs",
@@ -32,7 +34,7 @@ const SUITES = {
 const files = SUITES[mode];
 if (!files) {
   console.error(
-    `[test] unknown suite "${mode}" (expected api|orders|security|site|admin|layout|shop|all)`,
+    `[test] unknown suite "${mode}" (expected api|orders|security|site|seo|admin|layout|shop|all)`,
   );
   process.exit(2);
 }
